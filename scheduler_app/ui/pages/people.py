@@ -40,7 +40,7 @@ def _directory(ctx) -> None:
             r = next((r for r in c.requirements if r.participant_id == p.id), None)
             if r:
                 meets.append(f"{c.name.split(' (')[0]}: {'required' if r.required else 'optional'}")
-        rows.append({"id": p.id, "Name": p.name, "Email": p.email, "Role": p.role_title or "",
+        rows.append({"id": p.id, "Name": p.name, "Email": p.email or "—", "Role": p.role_title or "",
                      "Office / meeting place": loc.get(p.location_id, ""), "Usual length": p.preferred_duration,
                      "Meets": "; ".join(meets) or "—", "Availability": "✓ Submitted" if p.submitted_at else "▲ Missing",
                      "Active": p.active})
@@ -75,7 +75,8 @@ def _form(ctx, p: m.Participant | None) -> None:
     with st.form(f"pf_{p.id if p else 'new'}"):
         c1, c2 = st.columns(2)
         name = c1.text_input("Name", p.name if p else "")
-        email = c2.text_input("University email", p.email if p else "")
+        email = c2.text_input("Email (optional)", (p.email or "") if p else "",
+                              help="Leave blank for guests without a university email; you can copy their link instead.")
         c3, c4, c5 = st.columns([1.4, 1.2, 0.8])
         role = c3.text_input("Departmental role", (p.role_title or "") if p else "")
         loc = c4.selectbox("Office / meeting place", locs, index=locs.index(p.location_id) if p and p.location_id in locs else 0,
@@ -98,9 +99,9 @@ def _form(ctx, p: m.Participant | None) -> None:
 def _edit(ctx, p: m.Participant) -> None:
     st.markdown(f"#### {p.name}")
     _form(ctx, p)
-    st.markdown("**Personal availability link**")
+    st.markdown("**Personal link** — availability, sign-ups for talks and meals, and their published schedule")
     st.code(invite_link(ctx.settings, p.access_token), language=None)
-    st.caption("Anyone with this link can enter availability for this person, so send it only to them.")
+    st.caption("Anyone with this link can answer for this person, so send it only to them.")
     c1, c2 = st.columns(2)
     if c1.button("Issue a new link", icon=":material/key:", help="The old link stops working immediately."):
         with write(ctx, "New link issued"):
@@ -111,9 +112,10 @@ def _edit(ctx, p: m.Participant) -> None:
 
 
 def _import(ctx) -> None:
-    st.markdown("Upload a CSV with one person per row. Columns: **name**, **email** (required), and optionally "
+    st.markdown("Upload a CSV with one person per row. Columns: **name** (required), **email**, and optionally "
                 "**role**, **location**, **duration** (minutes), **required_for**, **optional_for** "
-                "(candidate names separated by `;`, or `all`). Existing emails are updated, not duplicated.")
+                "(candidate names separated by `;`, or `all`). People already in the list are updated, not "
+                "duplicated (matched by email, or by name when there is no email).")
     st.download_button("Download a template", CSV_TEMPLATE.encode(), "participants-template.csv", "text/csv",
                        icon=":material/download:")
     up = st.file_uploader("CSV file", type=["csv"])

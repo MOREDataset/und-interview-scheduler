@@ -9,3 +9,6 @@ data/
 .streamlit/secrets.toml
 *.pdf
 *.ics
+
+# Real search data (names, emails) never belongs in this public repository
+private/

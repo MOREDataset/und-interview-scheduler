@@ -6,6 +6,7 @@ reportlab==5.1.0
 icalendar==7.3.0
 pandas==3.1.0
 bcrypt==5.0.0
+pillow>=10              # logo uploads (already required by Streamlit)
 python-dotenv==1.2.4
 tzdata>=2024.1          # time-zone data on systems without it (e.g. Windows)
 psycopg[binary]>=3.2    # PostgreSQL driver (needed for Streamlit Cloud / shared use)

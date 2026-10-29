@@ -35,7 +35,8 @@ def itinerary_link(settings: Settings, token: str) -> str:
 
 
 def availability_request(settings: Settings, search, participant, reminder: bool = False) -> Draft:
-    dates = sorted({d.date for c in search.candidates for d in c.visit_days})
+    dates = sorted({d.date for c in search.candidates for d in c.visit_days if getattr(d, "is_interview", True)})
+    signups = any(e.rsvp_open for c in search.candidates for e in c.fixed_events)
     date_text = "\n".join(f"  • {fmt_date(d)}" for d in dates)
     deadline = (f"Please respond by {fmt_date(search.availability_deadline)} at "
                 f"{search.availability_deadline:%-I:%M %p}.") if search.availability_deadline else ""
@@ -46,9 +47,10 @@ def availability_request(settings: Settings, search, participant, reminder: bool
         f"Please mark when you are free using your personal link (no password needed; please don't share it):\n"
         f"{invite_link(settings, participant.access_token)}\n\n"
         f"It takes about two minutes. {deadline}\n\n"
-        f"Thank you,\n{search.coordinator_name or 'Search coordinator'}\n{search.department}"
+        + ("On the same page you can also tell us which talks and meals you'd like to join.\n\n" if signups else "")
+        + f"Thank you,\n{search.coordinator_name or 'Search coordinator'}\n{search.department}"
     )
-    return Draft(participant.email, subj, body)
+    return Draft(participant.email or "", subj, body)
 
 
 def itinerary_notice(settings: Settings, search, candidate) -> Draft:

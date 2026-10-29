@@ -13,6 +13,7 @@ from datetime import date, datetime, time, timezone
 from sqlalchemy import (
     JSON,
     Boolean,
+    LargeBinary,
     Column,
     Date,
     DateTime,
@@ -23,6 +24,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -68,7 +70,11 @@ class Search(Base):
     name: Mapped[str] = mapped_column(String(200))
     department: Mapped[str] = mapped_column(String(200), default="Department of Communication")
     timezone: Mapped[str] = mapped_column(String(64), default="America/Chicago")
-    slot_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    slot_minutes: Mapped[int] = mapped_column(Integer, default=15)  # availability grid
+    # Start times the scheduler may use (e.g. every 10 min). Defaults to the grid size.
+    start_step_minutes: Mapped[int | None] = mapped_column(Integer)
+    # Room used for one-on-ones when neither the meeting nor the person has a location.
+    default_location_id: Mapped[int | None] = mapped_column(Integer)
     default_meeting_minutes: Mapped[int] = mapped_column(Integer, default=30)
     buffer_minutes: Mapped[int] = mapped_column(Integer, default=5)
     availability_deadline: Mapped[datetime | None] = mapped_column(DateTime)
@@ -108,6 +114,7 @@ class Candidate(Base):
     search_id: Mapped[int] = mapped_column(ForeignKey("searches.id"))
     name: Mapped[str] = mapped_column(String(200))
     email: Mapped[str | None] = mapped_column(String(255))
+    affiliation: Mapped[str | None] = mapped_column(String(300))  # e.g. "Ph.D. Candidate at X University"
     public_note: Mapped[str | None] = mapped_column(Text)  # shown on the candidate itinerary
     internal_notes: Mapped[str | None] = mapped_column(Text)  # coordinator only
     status: Mapped[str] = mapped_column(String(16), default="draft")
@@ -143,7 +150,14 @@ class VisitDay(Base):
     date: Mapped[date] = mapped_column(Date)
     start_time: Mapped[time] = mapped_column(Time, default=time(8, 30))
     end_time: Mapped[time] = mapped_column(Time, default=time(17, 0))
+    # 'interview' days get one-on-one meetings; 'travel' days (arrival / departure only) do not.
+    kind: Mapped[str] = mapped_column(String(16), default="interview", server_default="interview")
+    note: Mapped[str | None] = mapped_column(Text)  # shown at the top of the day, e.g. "Breakfast at the hotel"
     candidate: Mapped[Candidate] = relationship(back_populates="visit_days")
+
+    @property
+    def is_interview(self) -> bool:
+        return (self.kind or "interview") == "interview"
 
 
 # ---------------------------------------------------------------- participants
@@ -154,7 +168,7 @@ class Participant(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     search_id: Mapped[int] = mapped_column(ForeignKey("searches.id"))
     name: Mapped[str] = mapped_column(String(200))
-    email: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255))  # optional: some guests have no UND email
     role_title: Mapped[str | None] = mapped_column(String(200))
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
     preferred_duration: Mapped[int | None] = mapped_column(Integer)
@@ -218,6 +232,7 @@ class Requirement(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=30)
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
+    public_note: Mapped[str | None] = mapped_column(Text)  # shown on the itinerary, e.g. Zoom link, escort
     candidate: Mapped[Candidate] = relationship(back_populates="requirements")
     participant: Mapped[Participant] = relationship()
     location: Mapped[Location | None] = relationship()
@@ -257,7 +272,13 @@ class FixedEvent(Base):
     end: Mapped[datetime] = mapped_column(DateTime)
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
     audience: Mapped[str | None] = mapped_column(String(300))  # e.g. "Department faculty & students"
-    public_note: Mapped[str | None] = mapped_column(String(500))
+    public_note: Mapped[str | None] = mapped_column(Text)  # instructions shown to the candidate
+    # Logistics: who drives / escorts / hosts. needs_host flags it on the dashboard until filled in.
+    host_label: Mapped[str | None] = mapped_column(String(40))
+    host: Mapped[str | None] = mapped_column(String(200))
+    needs_host: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Faculty can sign up ("I'll attend in person") from their own page.
+    rsvp_open: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     candidate: Mapped[Candidate] = relationship(back_populates="fixed_events")
     location: Mapped[Location | None] = relationship()
     attendees: Mapped[list[Participant]] = relationship(secondary=event_attendees)
@@ -327,3 +348,13 @@ class SchemaInfo(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[int] = mapped_column(Integer)
     applied_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AppSetting(Base):
+    """Small key/value store for app-wide settings such as the uploaded logo."""
+
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    text_value: Mapped[str | None] = mapped_column(Text)
+    blob_value: Mapped[bytes | None] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

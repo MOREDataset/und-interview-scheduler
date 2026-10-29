@@ -213,7 +213,7 @@ def test_csv_import_creates_updates_and_reports(b):
     ).encode()
     rep = sv.import_participants_csv(b.s, b.search, raw, "t")
     assert (rep.created, rep.updated) == (2, 1)
-    assert any("valid email" in e for e in rep.errors) and any("Unknown Cand" in e for e in rep.errors)
+    assert any("isn't an email address" in e for e in rep.errors) and any("Unknown Cand" in e for e in rep.errors)
     names = sorted(p.name for p in b.search.participants)
     assert names == ["Everyone Person", "New Person Renamed"]
     req = {(r.participant.name, r.required) for r in a.requirements}

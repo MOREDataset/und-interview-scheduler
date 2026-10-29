@@ -18,6 +18,7 @@ from .services import audit, save_availability, intervals_to_cells, day_window, 
 DEMO_COORDINATOR_EMAIL = "coordinator@example.edu"
 DEMO_COORDINATOR_PASSWORD_DEFAULT = "demo-coordinator"
 
+A_ARRIVE = date(2026, 11, 11)  # travel day: arrival and dinner only
 A_DAY = date(2026, 11, 12)
 B_DAY1 = date(2026, 11, 16)
 B_DAY2 = date(2026, 11, 17)
@@ -95,7 +96,7 @@ def seed_demo(s: Session) -> m.Search:
     search = m.Search(
         name="DEMO — Assistant Professor search (fictional data)",
         department="Department of Communication",
-        timezone="America/Chicago", slot_minutes=15, default_meeting_minutes=25, buffer_minutes=5,
+        timezone="America/Chicago", slot_minutes=15, start_step_minutes=5, default_meeting_minutes=25, buffer_minutes=5,
         availability_deadline=datetime(2026, 11, 6, 17, 0), availability_open=True,
         coordinator_name="Search Coordinator (demo)", coordinator_email=DEMO_COORDINATOR_EMAIL, is_demo=True,
     )
@@ -108,22 +109,28 @@ def seed_demo(s: Session) -> m.Search:
         ("Demo Conference Room", "Placeholder location"),
         ("Demo Lecture Hall", "Placeholder location"),
         ("Demo Dining Room", "Placeholder location"),
+        ("Demo Airport", "Placeholder location — arrivals curb"),
+        ("Demo Hotel", "Placeholder location — lobby"),
+        ("Demo Restaurant", "Placeholder location"),
     ] + [(f"Demo Office {n}", "Placeholder location") for n in range(101, 113)] + [("Demo Dean's Suite", "Placeholder")]:
         locs[name] = m.Location(search_id=search.id, name=name, details=details)
         s.add(locs[name])
     s.flush()
 
     cand_a = m.Candidate(search_id=search.id, name="Dr. Avery Placeholder (Demo Candidate A)",
-                         email="candidate.a@example.edu",
+                         email="candidate.a@example.edu", affiliation="Assistant Professor, Example State University (fictional)",
                          public_note="Welcome! Please check in at the Demo Main Office on arrival. (Demo text)",
                          internal_notes="Demo internal note: hotel booked for two nights.")
     cand_b = m.Candidate(search_id=search.id, name="Dr. Jordan Hypothetical (Demo Candidate B)",
-                         email="candidate.b@example.edu",
+                         email="candidate.b@example.edu", affiliation="Doctoral candidate, Sample University (fictional)",
                          public_note="Your visit spans two days. Lunch is provided both days. (Demo text)")
     s.add_all([cand_a, cand_b])
     s.flush()
     s.add_all([
-        m.VisitDay(candidate_id=cand_a.id, date=A_DAY, start_time=time(8, 30), end_time=time(17, 0)),
+        m.VisitDay(candidate_id=cand_a.id, date=A_ARRIVE, start_time=time(15, 0), end_time=time(21, 0), kind="travel",
+                   note="Arrival day. Nothing to prepare. (Demo text)"),
+        m.VisitDay(candidate_id=cand_a.id, date=A_DAY, start_time=time(8, 30), end_time=time(17, 0),
+                   note="Breakfast is at the Demo Hotel. (Demo text)"),
         m.VisitDay(candidate_id=cand_b.id, date=B_DAY1, start_time=time(9, 0), end_time=time(17, 0)),
         m.VisitDay(candidate_id=cand_b.id, date=B_DAY2, start_time=time(8, 30), end_time=time(12, 0)),
     ])
@@ -141,15 +148,24 @@ def seed_demo(s: Session) -> m.Search:
                 upsert_requirement(s, cand, p, req, dur)
     s.flush()
 
-    def ev(c, d, a, b, title, kind, loc, attendees=(), audience=None):
+    def ev(c, d, a, b, title, kind, loc, attendees=(), audience=None, **extra):
         e = m.FixedEvent(candidate_id=c.id, title=title, kind=kind, start=_dt(d, a), end=_dt(d, b),
-                         location_id=locs[loc].id if loc else None, audience=audience)
+                         location_id=locs[loc].id if loc else None, audience=audience, **extra)
         e.attendees = [people[n] for n in attendees]
         s.add(e)
 
+    ev(cand_a, A_ARRIVE, "15:10", "15:40", "Arrival at the airport (demo flight)", "arrival", "Demo Airport",
+       host_label="Airport pick-up", needs_host=True,
+       public_note="You'll be met at the arrivals curb and driven to the hotel. (Demo text)")
+    ev(cand_a, A_ARRIVE, "18:30", "20:30", "Dinner with the search committee", "meal", "Demo Restaurant",
+       attendees=["Dr. Morgan Sample"], host_label="Transportation by", host="Dr. Morgan Sample", rsvp_open=True)
+    ev(cand_a, A_DAY, "08:15", "08:30", "Pick-up at the hotel", "other", "Demo Hotel", host_label="Driver",
+       needs_host=True)
+
     ev(cand_a, A_DAY, "08:30", "09:00", "Arrival and welcome", "arrival", "Demo Main Office")
     ev(cand_a, A_DAY, "10:30", "11:30", "Research presentation", "presentation", "Demo Lecture Hall",
-       audience="Department faculty and students")
+       audience="Department faculty and students", rsvp_open=True,
+       public_note="Please plan a 40-minute talk followed by questions. (Demo text)")
     ev(cand_a, A_DAY, "12:00", "13:00", "Lunch with search committee", "meal", "Demo Dining Room",
        attendees=["Dr. Riley Example", "Dr. Quinn Placeholder"])
     ev(cand_a, A_DAY, "16:30", "17:00", "Wrap-up and departure", "departure", "Demo Main Office")
@@ -159,7 +175,7 @@ def seed_demo(s: Session) -> m.Search:
     ev(cand_b, B_DAY1, "13:30", "14:30", "Teaching demonstration", "teaching", "Demo Lecture Hall",
        audience="Undergraduate class (demo)")
     ev(cand_b, B_DAY2, "10:00", "11:00", "Research presentation", "presentation", "Demo Lecture Hall",
-       audience="Department faculty and students")
+       audience="Department faculty and students", rsvp_open=True)
     ev(cand_b, B_DAY2, "11:45", "12:00", "Departure", "departure", "Demo Main Office")
     s.flush()
     s.refresh(search)

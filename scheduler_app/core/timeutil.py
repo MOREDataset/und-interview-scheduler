@@ -102,6 +102,22 @@ def fmt_date(d: date | datetime, long: bool = True) -> str:
     return f"{d:%a} {d:%b} {d.day}"
 
 
+def fmt_span(dates: Sequence[date]) -> str:
+    """'November 8–10, 2026' for consecutive days in one month, otherwise a short list."""
+    ds = sorted(set(dates))
+    if not ds:
+        return "Dates to be confirmed"
+    if len(ds) == 1:
+        return fmt_date(ds[0])
+    consecutive = all((b - a).days == 1 for a, b in zip(ds, ds[1:]))
+    a, b = ds[0], ds[-1]
+    if consecutive and (a.year, a.month) == (b.year, b.month):
+        return f"{a:%B} {a.day}–{b.day}, {a.year}"
+    if consecutive and a.year == b.year:
+        return f"{a:%B} {a.day} – {b:%B} {b.day}, {a.year}"
+    return ", ".join(f"{d:%b} {d.day}" for d in ds) + f", {b.year}"
+
+
 def time_slots(day_start: time, day_end: time, step: int) -> list[time]:
     cur = datetime.combine(date(2000, 1, 1), day_start)
     end = datetime.combine(date(2000, 1, 1), day_end)

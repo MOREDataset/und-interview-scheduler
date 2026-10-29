@@ -8,9 +8,14 @@ University of North Dakota Department of Communication. It is built with Python 
   scheduling assistant propose one), fixes conflicts, and publishes.
 - **Candidates** get a read-only link to their own published itinerary, with PDF and calendar downloads.
 
+It also handles the parts of a campus visit around the one-on-ones: **travel days** (arrival and
+departure), **drivers, escorts and hosts** that still need someone, **talks and meals faculty can sign
+up for** (with head counts), copying one candidate's schedule to the next, and loading a whole search
+from a **template file**.
+
 > **Demo data:** the first time you run the app it loads a demonstration search. Every name, email,
 > room and date in it is **fictional**, and the app shows a "DEMO DATA" banner while you're in it.
-> See [Using it for a real search](#using-it-for-a-real-search) to switch it off.
+> See [Using it for a real search](#4-using-it-for-a-real-search) to switch it off.
 
 ---
 
@@ -63,7 +68,9 @@ To stop the app, press `Ctrl+C` in the terminal.
    an empty spot on a candidate's lane to add one. The app refuses double-bookings. If you move a
    meeting outside someone's availability, it asks you for a reason.
 6. **Itineraries & export**: publish, download the PDF, calendar (.ics) and CSV files, and copy
-   the candidate's link.
+   the candidate's link. **Coordinator exports** has a logistics sheet (drivers, escorts, head counts).
+7. **Candidates → Fixed events**: open an event to see the logistics fields (role, person, "someone
+   is needed") and the "let faculty sign up" switch.
 
 ---
 
@@ -72,7 +79,7 @@ To stop the app, press `Ctrl+C` in the terminal.
 | Person | How they get in | What they can see |
 |---|---|---|
 | Coordinator | Email + password (or university SSO if configured) | Everything in the search |
-| Faculty / staff | Personal link `…/?invite=<token>` from the coordinator | Visit dates, **their own** availability, **their own published** meetings |
+| Faculty / staff | Personal link `…/?invite=<token>` from the coordinator | Visit dates, **their own** availability, **their own published** meetings, and talks/meals they can sign up for |
 | Candidate | Read-only link `…/?itinerary=<token>` | **Only their own published itinerary.** No internal notes, availability, emails or other candidates |
 
 - Faculty never see other people's availability.
@@ -95,6 +102,15 @@ To stop the app, press `Ctrl+C` in the terminal.
 - Fixed events (talks, meals, arrival, etc.) and locked meetings are never moved, and nothing is
   placed on top of them. People listed as attendees of a fixed event count as busy during it.
 - The transition buffer (default 5 minutes) is kept between items.
+
+**Interview days and travel days.** Each visit day is either an *interview day* (one-on-ones can be
+placed inside its interview hours, and faculty are asked for availability on it) or a *travel day*
+(arrival or departure only: it shows on the itinerary with its events, but nobody is asked for
+availability and no meetings are placed on it). Fixed events can be outside the interview hours,
+for example a 7 PM dinner.
+
+**Start times.** The availability grid size (e.g. 15 minutes) and the start-time step for meetings
+(e.g. every 10 minutes, so meetings can start at 9:40 or 10:10) are set separately in Search settings.
 
 **Preferences** are scored. Required meetings always come first, then optional ones. After that,
 the objective you pick decides the trade-off between preferred times and compact days with few gaps.
@@ -121,22 +137,45 @@ required meetings not yet scheduled.
 
 1. In `.env`, set `DEMO_MODE=false`, and set `SECRET_KEY` to a long random value:
    `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-2. Create your own coordinator account:
-   `python manage.py create-coordinator your.name@und.edu "Your Name"`
-3. Start the app, sign in, and go to **Search settings → New search**. Or delete the demo search
-   from the same page.
-4. Add **Candidates**: their visit days, fixed events and who they should meet.
-5. Add **Participants**, one at a time or by CSV import (a template is on the page).
-6. Send everyone their personal link (**Availability responses → Reminders**).
-7. When the deadline passes, collection closes automatically. You can also close it by hand.
-8. Schedule, review, publish and share.
+2. Create your own coordinator account: **Search settings → Coordinators → Add a coordinator**, or
+   `python manage.py create-coordinator your.name@und.edu "Your Name"`.
+3. Start a search: **Search settings → New search** (blank, or from a template file; see below).
+   You can delete the demo search on **Search settings → This search**.
+4. The **Overview** page shows a step-by-step checklist and links to the next thing to do:
+   1. **Candidates**: visit days (interview or travel day), fixed events, and who they should meet.
+      **Copy another candidate's schedule** when you add the second candidate: days, events and the
+      meeting list come along, shifted to the new dates.
+   2. **Participants**: one at a time or by CSV import. Email is optional (for guests without a
+      university address you can copy their personal link instead).
+   3. **Availability responses**: send each person their personal link. The first message is an
+      invitation, later ones are reminders.
+   4. **Scheduling assistant**, then fine-tune in the **Scheduling workspace**.
+   5. **Itineraries & export**: publish and share.
+5. When the deadline passes, collection closes automatically. You can also close it by hand.
 
 Set `APP_BASE_URL` to the address people will use, so that the links in emails are correct.
 
-**Branding.** The app uses a restrained, UND-inspired green, but it does **not** include any
-university logo. If University Marketing gives you an authorized logo file, set
-`BRAND_LOGO_PATH=path/to/logo.png` and it will appear on PDFs. The colours can be changed in
-`.streamlit/config.toml`.
+**Logistics and sign-ups.** When you edit a fixed event you can set a logistics role (Driver,
+Airport pick-up, Escorted by, Tour by, ...), the person, and tick **Someone is needed**. Until a
+person is filled in, the Overview lists it under *Needs attention*. Turn on **Let faculty sign up**
+for talks and meals: faculty then see the event on their own page with an *I'll attend* switch, the
+head count appears on the Overview, and the full list is in the logistics sheet.
+
+**Templates.** **Search settings → Templates** downloads the whole setup of a search (rooms, people,
+candidates, visit days, events, meeting lists and placed meetings) as a `.json` file, and loads such
+a file as a new search. Loading never changes an existing search. A fictional example is in
+[`templates/example-search.json`](templates/example-search.json). Meeting times typed in from a
+draft itinerary can be included as `draft_meetings`; they are marked "not confirmed yet" and show
+as warnings until people's availability confirms them. **Keep real template files out of this
+repository** (they contain names and emails).
+
+**Logo.** No university logo ships with the app. Download the official files from the
+[UND brand downloads page](https://campus.und.edu/brand/downloads.html) (the *Digital PNG*
+versions) and upload them under **Search settings → Logo**: the full-color version for white
+backgrounds (PDFs, itineraries, sign-in page) and, optionally, the white/reverse version for the
+dark sidebar. Follow the university's logo guidelines; for a department lockup, ask University
+Marketing. The logo is stored in the database, so it survives redeploys. (`BRAND_LOGO_PATH` still
+works as a fallback for PDFs.) The colours can be changed in `.streamlit/config.toml`.
 
 **Email.** If you fill in the `SMTP_*` settings, reminders and itinerary links can be sent from
 the app, but only when you press the send button. Without them, the app gives you ready-to-send
@@ -200,6 +239,11 @@ use the default local file, submitted availability will eventually be lost.
   `DATABASE_URL` in your `.env`: `python manage.py create-coordinator you@und.edu "Your Name"`.
   Then delete the demo search on the **Search settings** page.
 
+**Updating the app.** Push to `main`, then use **Manage app → Reboot** on Streamlit Cloud. When a new
+version adds database columns, they are added automatically at start-up; existing data is never
+changed or removed. (Tested against databases created by the first release on both PostgreSQL and
+SQLite.)
+
 **Privacy:** the app's pages need a sign-in or a secret link, but the app itself is on the public
 internet. Keep the GitHub repository private, and check with UND IT whether hosting candidate
 information on Streamlit Cloud and Neon is acceptable. If it isn't, use the Docker / university-server
@@ -241,7 +285,7 @@ add Alembic migrations (see `docs/ARCHITECTURE.md`).
 python -m pytest
 ```
 
-There are 41 tests. They cover the scheduling rules and the realistic scenarios from the brief:
+There are 55 tests. They cover the scheduling rules and the realistic scenarios from the brief:
 - people available for only one candidate
 - overlapping availability
 - slots too short to fit a meeting
@@ -252,6 +296,9 @@ There are 41 tests. They cover the scheduling rules and the realistic scenarios 
 - daylight-saving time in calendar files
 - PDF, CSV and .ics exports
 - data surviving a server restart
+- travel days (never used for meetings), logistics, faculty sign-ups, copying a candidate
+- template import/export round trip, logo upload
+- upgrading a database created by an older version without losing data
 
 ---
 
@@ -272,6 +319,8 @@ scheduler_app/
     notify.py                Email drafts and optional SMTP sending
     auth.py                  Passwords, link tokens, signed sign-in cookie
     seed.py                  Fictional demo data
+    templates.py             Save / load a whole search as a JSON template
+    branding.py              Uploaded logo handling
   ui/
     theme.py                 Visual design (typography, status chips, dashboard pieces)
     ctx.py                   Per-page context and safe "write" helper
@@ -280,6 +329,7 @@ scheduler_app/
       timeline.py            Scheduling timeline with drag-to-move
     pages/                   One file per page
 static/fonts/                Public Sans + Source Serif 4 (SIL Open Font License)
+templates/example-search.json  Fictional example template
 tests/                       Automated tests (pytest)
 docs/ARCHITECTURE.md         Design notes, data model, trade-offs
 ```

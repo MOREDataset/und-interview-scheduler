@@ -8,20 +8,29 @@ from html import escape
 import streamlit as st
 
 from ...core import exports, services as sv
-from ...core.timeutil import fmt_date
+from ...core.branding import data_uri, load_brand
+from ...core.timeutil import fmt_span
 
 
-def itinerary_html(snap: dict, org: str, unit: str, draft: bool = False) -> str:
-    dates = [date.fromisoformat(d["date"]) for d in snap["days"]]
-    span = " &amp; ".join(fmt_date(d) for d in dates)
-    parts = [f"<div class='paper'><div class='org'>{escape(org)}</div><div class='unit'>{escape(unit)}</div><div class='rule'></div>"
+def itinerary_html(snap: dict, org: str, unit: str, draft: bool = False, logo: bytes | None = None) -> str:
+    span = fmt_span([date.fromisoformat(d["date"]) for d in snap["days"]])
+    if logo:
+        head = (f"<img src='{data_uri(logo)}' alt='{escape(org)}' style='max-height:58px;max-width:320px;display:block'>"
+                f"<div class='unit' style='margin-top:6px'>{escape(unit)}</div>")
+    else:
+        head = f"<div class='org'>{escape(org)}</div><div class='unit'>{escape(unit)}</div>"
+    aff = snap["candidate"].get("affiliation")
+    parts = [f"<div class='paper'>{head}<div class='rule'></div>"
              f"<h1>Campus Visit Itinerary{' — DRAFT' if draft else ''}</h1>"
-             f"<div style='font-size:1.1rem;margin-top:4px'><b>{escape(snap['candidate']['name'])}</b></div>"
-             f"<div class='small-muted'>{escape(snap['search']['name'])} · {span}</div>"]
+             f"<div style='font-size:1.1rem;margin-top:4px'><b>{escape(snap['candidate']['name'])}</b>"
+             + (f"<span class='small-muted' style='font-size:1rem'> · {escape(aff)}</span>" if aff else "")
+             + f"</div><div class='small-muted'>{escape(snap['search']['name'])} · {escape(span)}</div>"]
     if snap["candidate"].get("note"):
         parts.append(f"<p style='margin:14px 0 0'>{escape(snap['candidate']['note'])}</p>")
     for d in snap["days"]:
-        parts.append(f"<div class='dayh'>{fmt_date(date.fromisoformat(d['date']))}</div>")
+        parts.append(f"<div class='dayh'>{escape(exports.day_heading(d))}</div>")
+        if d.get("note"):
+            parts.append(f"<p class='small-muted' style='margin:0 0 4px'>{escape(d['note'])}</p>")
         rows = exports.day_rows(d)
         if not rows:
             parts.append("<p class='small-muted'>Schedule to be confirmed.</p>")
@@ -29,9 +38,11 @@ def itinerary_html(snap: dict, org: str, unit: str, draft: bool = False) -> str:
         trs = []
         for r in rows:
             cls = "gap" if r["kind"] == "gap" else ("ev" if r["kind"] != "meeting" else "")
-            note = f"<div class='note'>{escape(r['note'])}</div>" if r.get("note") else ""
-            trs.append(f"<tr class='{cls}'><td class='t'>{escape(r['time'])}</td><td>{escape(r['event'])}{note}</td>"
-                       f"<td>{escape(r['participants'])}</td><td>{escape(r['location'])}</td></tr>")
+            extra = "".join(f"<div class='note'>{escape(x)}</div>" for x in (r.get("host"), r.get("note")) if x)
+            where = escape(r["location"]) + (f"<div class='note'>{escape(r['location_details'])}</div>"
+                                             if r.get("location_details") else "")
+            trs.append(f"<tr class='{cls}'><td class='t'>{escape(r['time'])}</td><td>{escape(r['event'])}{extra}</td>"
+                       f"<td>{escape(r['participants'])}</td><td>{where}</td></tr>")
         parts.append("<table class='itin'><thead><tr><th>Time</th><th>Event / meeting</th><th>Participants</th>"
                      f"<th>Location</th></tr></thead><tbody>{''.join(trs)}</tbody></table>")
     tz = snap["search"]["timezone"]
@@ -54,10 +65,10 @@ def render(ctx, cand) -> None:
                 "Please contact the search coordinator.</p>")
         return
     snap = v.snapshot
-    st.html(itinerary_html(snap, ctx.settings.org_name, ctx.settings.unit_name))
+    logo = load_brand(ctx.s, ctx.settings.brand_logo_path).light
+    st.html(itinerary_html(snap, ctx.settings.org_name, ctx.settings.unit_name, logo=logo))
     c1, c2, c3, _ = st.columns([1, 1, 1, 1.5])
-    c1.download_button("Download PDF", exports.candidate_pdf(snap, ctx.settings.org_name, ctx.settings.unit_name,
-                                                             ctx.settings.brand_logo_path),
+    c1.download_button("Download PDF", exports.candidate_pdf(snap, ctx.settings.org_name, ctx.settings.unit_name, logo),
                        file_name="campus-visit-itinerary.pdf", mime="application/pdf", icon=":material/picture_as_pdf:")
     c2.download_button("Add to calendar", exports.candidate_ics(snap), file_name="campus-visit.ics",
                        mime="text/calendar", icon=":material/calendar_add_on:")

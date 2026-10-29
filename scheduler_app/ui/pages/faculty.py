@@ -8,19 +8,31 @@ from html import escape
 import streamlit as st
 
 from ...core import exports, models as m
+from ...core.branding import data_uri, load_brand
 from ...core import services as sv
-from ...core.timeutil import fmt_date, fmt_range, fmt_time, time_slots
+from ...core.timeutil import fmt_date, fmt_range, fmt_span, fmt_time, time_slots
 from .. import theme
 from ..components.avail_grid import availability_grid
 from ..ctx import write
 
 
-def _header(settings) -> None:
-    st.html(f"<div class='eyebrow'>{escape(settings.org_name)} · {escape(settings.unit_name)}</div>")
+def _header(ctx) -> None:
+    settings = ctx.settings
+    logo = load_brand(ctx.s, settings.brand_logo_path).light
+    if logo:
+        st.html(f"<div style='display:flex;align-items:center;gap:14px;margin-bottom:10px'>"
+                f"<img src='{data_uri(logo)}' alt='{escape(settings.org_name)}' style='max-height:44px;max-width:260px'>"
+                f"<span class='eyebrow' style='margin:0'>{escape(settings.unit_name)}</span></div>")
+    else:
+        st.html(f"<div class='eyebrow'>{escape(settings.org_name)} · {escape(settings.unit_name)}</div>")
+
+
+def _who(part: m.Participant) -> str:
+    return part.email or f"{part.name} (personal link)"
 
 
 def render(ctx, part: m.Participant | None) -> None:
-    _header(ctx.settings)
+    _header(ctx)
     if part is None:
         st.html("<div class='ph-title'>This link isn't valid</div><p class='ph-sub'>The link may have been replaced "
                 "with a new one. Please use the most recent email from the search coordinator, or contact them for a new link.</p>")
@@ -39,9 +51,10 @@ def render(ctx, part: m.Participant | None) -> None:
     asks = []
     for c in search.candidates:
         req = next((r for r in c.requirements if r.participant_id == part.id), None)
-        if req is None or not c.visit_days:
+        idays = [d.date for d in c.visit_days if d.is_interview]
+        if req is None or not idays:
             continue
-        when = " & ".join(fmt_date(d.date, long=False) for d in c.visit_days)
+        when = fmt_span(idays)
         kind = "requested" if req.required else "optional"
         asks.append(f"<li><b>{escape(c.name)}</b> — visiting {escape(when)}; "
                     f"{req.duration_minutes}-minute one-on-one <span class='small-muted'>({kind})</span></li>")
@@ -60,11 +73,18 @@ def render(ctx, part: m.Participant | None) -> None:
         st.info("The visit dates haven't been set yet. Please check back soon.")
         return
 
-    tab_avail, tab_mine = st.tabs(["1 · Your availability", "2 · Your scheduled meetings"])
-    with tab_avail:
+    group = sv.rsvp_events(search)
+    labels = ["1 · Your availability", "2 · Your schedule"]
+    if group:
+        labels.append(f"3 · Talks & meals you can join ({len(group)})")
+    tabs = st.tabs(labels)
+    with tabs[0]:
         _availability(ctx, part, search, dates, open_)
-    with tab_mine:
+    with tabs[1]:
         _my_meetings(ctx, part, search)
+    if group:
+        with tabs[2]:
+            _group_events(ctx, part, group)
 
 
 def _local(utc_dt: datetime | None, search) -> str:
@@ -88,7 +108,8 @@ def _availability(ctx, part, search, dates: list[date], open_: bool) -> None:
     for d in dates:
         ws, we = sv.day_window(search, d)
         n = len(time_slots(ws, we, step))
-        who = [c.name.split(" (")[0] for c in search.candidates if any(v.date == d for v in c.visit_days)]
+        who = [c.name.split(" (")[0] for c in search.candidates
+               if any(v.date == d and v.is_interview for v in c.visit_days)]
         cols.append({"key": d.isoformat(), "label": fmt_date(d, long=False), "sub": "Visit: " + ", ".join(who),
                      "startMin": ws.hour * 60 + ws.minute, "step": step, "n": n})
 
@@ -136,7 +157,7 @@ def _availability(ctx, part, search, dates: list[date], open_: bool) -> None:
                  disabled=not changed and part.submitted_at is not None):
         with write(ctx, "Thank you — your availability is saved."):
             sv.save_availability(ctx.s, part, {date.fromisoformat(k): v for k, v in draft["cells"].items()},
-                                 actor=part.email)
+                                 actor=_who(part))
             st.session_state.pop(key, None)
     if changed:
         c2.html("<span class='chip warning'>▲ You have unsaved changes</span>")
@@ -147,11 +168,30 @@ def _availability(ctx, part, search, dates: list[date], open_: bool) -> None:
         c2.html("<span class='small-muted'>Not available at all? Just press Submit with nothing marked.</span>")
 
 
+def _group_events(ctx, part, events) -> None:
+    st.html("<p class='small-muted' style='margin:4px 0 10px'>Let us know which talks and meals you plan to join, so "
+            "the department can reserve enough seats and food. You can change your answer at any time.</p>")
+    for e in events:
+        going = part in e.attendees
+        others = len(e.attendees) - (1 if going else 0)
+        where = e.location.name if e.location else "Location to be confirmed"
+        with st.container(border=True):
+            c1, c2 = st.columns([3.2, 1], vertical_alignment="center")
+            c1.html(f"<div style='font-weight:600'>{escape(e.title)}</div>"
+                    f"<div class='small-muted'>With {escape(e.candidate.name)} · {fmt_date(e.start, long=False)}, "
+                    f"{fmt_range(e.start, e.end)} · {escape(where)}"
+                    + (f" · {others} colleague{'s' if others != 1 else ''} going" if others else "") + "</div>")
+            val = c2.toggle("I'll attend", value=going, key=f"rsvp_{e.id}")
+            if val != going:
+                with write(ctx, "Thanks — we've counted you in." if val else "Got it — we've taken you off the list."):
+                    sv.set_rsvp(ctx.s, part, e, val, actor=_who(part))
+
+
 def _my_meetings(ctx, part, search) -> None:
-    items = sv.published_items_for_participant(search, part.id)
+    items = sv.published_items_for_participant(search, part.id, include_signups=True)
     if not items:
         st.html("<p class='small-muted'>Nothing published yet. Once the coordinator publishes the itineraries, "
-                "your meetings will appear here.</p>")
+                "your meetings (and any talks or meals you signed up for) will appear here.</p>")
         return
     by_day: dict[str, list[dict]] = {}
     for it in items:
@@ -163,10 +203,11 @@ def _my_meetings(ctx, part, search) -> None:
             what = f"Meeting with {it['candidate']}" if it["type"] == "meeting" else f"{it['title']} — {it['candidate']}"
             rows.append(f"<tr><td class='t'>{fmt_range(s, e)}</td><td>{escape(what)}</td><td>{escape(it.get('location') or '—')}</td></tr>")
         st.html(f"<div class='dayh'>{fmt_date(date.fromisoformat(dkey))}</div><table class='itin'><thead><tr><th>Time</th>"
-                f"<th>Meeting</th><th>Location</th></tr></thead><tbody>{''.join(rows)}</tbody></table>")
+                f"<th>What</th><th>Location</th></tr></thead><tbody>{''.join(rows)}</tbody></table>")
     c1, c2, _ = st.columns([1, 1, 2])
     c1.download_button("Add to calendar (.ics)", exports.participant_ics(part.name, items, search.timezone, search.department),
                        file_name="candidate-meetings.ics", mime="text/calendar", icon=":material/calendar_add_on:")
     c2.download_button("Download PDF", exports.participant_pdf(part.name, items, search.timezone, ctx.settings.org_name,
-                                                               ctx.settings.unit_name, search.name, ctx.settings.brand_logo_path),
+                                                               ctx.settings.unit_name, search.name,
+                                                               load_brand(ctx.s, ctx.settings.brand_logo_path).light),
                        file_name="my-candidate-meetings.pdf", mime="application/pdf", icon=":material/picture_as_pdf:")

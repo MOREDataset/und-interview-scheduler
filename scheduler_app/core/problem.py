@@ -80,7 +80,7 @@ class Problem:
     events: list[PEvent]
     requirements: list[PRequirement]
     meetings: list[PMeeting]
-    slot_minutes: int = 15
+    slot_minutes: int = 15  # start-time step used by the scheduler
     buffer_minutes: int = 5
 
     def days_for(self, candidate_id: int) -> list[PDay]:
@@ -98,6 +98,8 @@ def load_problem(s: Session, search_id: int) -> Problem:
     days, events, reqs, meetings = [], [], [], []
     for c in search.candidates:
         for d in c.visit_days:
+            if not d.is_interview:
+                continue  # travel days: no one-on-one meetings
             days.append(PDay(c.id, d.date, datetime.combine(d.date, d.start_time), datetime.combine(d.date, d.end_time)))
         for e in c.fixed_events:
             events.append(PEvent(e.id, c.id, e.title, e.start, e.end, {a.id for a in e.attendees}))
@@ -115,4 +117,5 @@ def load_problem(s: Session, search_id: int) -> Problem:
             (pp.preferred if a.level == m.PREFERRED else pp.available).append((a.start, a.end))
         pp.responded_dates = {r.date for r in p.responses}
         parts[p.id] = pp
-    return Problem(cands, parts, days, events, reqs, meetings, search.slot_minutes, search.buffer_minutes)
+    step = search.start_step_minutes or search.slot_minutes
+    return Problem(cands, parts, days, events, reqs, meetings, step, search.buffer_minutes)

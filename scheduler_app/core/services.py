@@ -46,13 +46,14 @@ def list_searches(s: Session) -> list[m.Search]:
     return list(s.scalars(select(m.Search).order_by(m.Search.created_at.desc())))
 
 
-def visit_dates(search: m.Search) -> list[date]:
-    return sorted({d.date for c in search.candidates for d in c.visit_days})
+def visit_dates(search: m.Search, interview_only: bool = True) -> list[date]:
+    """Dates faculty are asked about. Travel (arrival/departure-only) days are skipped."""
+    return sorted({d.date for c in search.candidates for d in c.visit_days if d.is_interview or not interview_only})
 
 
 def day_window(search: m.Search, d: date) -> tuple[time, time]:
     """Union of all candidates' interview hours on a date (what faculty are asked about)."""
-    days = [vd for c in search.candidates for vd in c.visit_days if vd.date == d]
+    days = [vd for c in search.candidates for vd in c.visit_days if vd.date == d and vd.is_interview]
     if not days:
         return time(8, 0), time(17, 0)
     return min(v.start_time for v in days), max(v.end_time for v in days)
@@ -152,10 +153,12 @@ def participant_cells(participant: m.Participant, search: m.Search) -> dict[date
 
 
 # ------------------------------------------------------------------ meetings
-def _default_location_id(req: m.Requirement | None, participant: m.Participant) -> int | None:
+def default_location_id_for(req: m.Requirement | None, participant: m.Participant) -> int | None:
+    """Where a one-on-one happens: the meeting's own room, else the person's office,
+    else the search's default meeting room."""
     if req and req.location_id:
         return req.location_id
-    return participant.location_id
+    return participant.location_id or participant.search.default_location_id
 
 
 def check_meeting(s: Session, search_id: int, candidate_id: int, participant_id: int,
@@ -200,7 +203,7 @@ def save_meeting(s: Session, *, candidate: m.Candidate, participant: m.Participa
                                                    m.Requirement.participant_id == participant.id))
         meeting = m.Meeting(candidate_id=candidate.id, participant_id=participant.id,
                             requirement_id=req.id if req else None, source=source,
-                            location_id=location_id if location_id is not None else _default_location_id(req, participant))
+                            location_id=location_id if location_id is not None else default_location_id_for(req, participant))
         candidate.meetings.append(meeting)  # keeps the in-memory collection in sync
     else:
         meeting.location_id = location_id
@@ -278,28 +281,35 @@ def apply_proposals(s: Session, search_id: int, result, actor: str) -> int:
 
 
 # ------------------------------------------------------------------ itineraries / publishing
+def _event_item(e: m.FixedEvent) -> dict:
+    return {
+        "type": "event", "kind": e.kind, "title": e.title,
+        "start": e.start.isoformat(), "end": e.end.isoformat(),
+        "participants": [{"id": a.id, "name": a.name, "title": a.role_title or ""} for a in e.attendees],
+        "audience": e.audience or "",
+        "location": e.location.name if e.location else "",
+        "location_details": (e.location.details or "") if e.location else "",
+        "note": e.public_note or "",
+        "host_label": (e.host_label or "") if e.host else "",
+        "host": e.host or "",
+    }
+
+
 def build_itinerary(candidate: m.Candidate) -> dict:
     """The candidate-safe itinerary content for the CURRENT DRAFT (no internal notes,
     no availability, no emails)."""
     days = []
-    for vd in candidate.visit_days:
+    reqs = {r.participant_id: r for r in candidate.requirements}
+    for vd in sorted(candidate.visit_days, key=lambda v: v.date):
         items = []
         for e in candidate.fixed_events:
-            if e.start.date() != vd.date:
-                continue
-            items.append({
-                "type": "event", "kind": e.kind, "title": e.title,
-                "start": e.start.isoformat(), "end": e.end.isoformat(),
-                "participants": [{"id": a.id, "name": a.name, "title": a.role_title or ""} for a in e.attendees],
-                "audience": e.audience or "",
-                "location": e.location.name if e.location else "",
-                "location_details": (e.location.details or "") if e.location else "",
-                "note": e.public_note or "",
-            })
+            if e.start.date() == vd.date:
+                items.append(_event_item(e))
         for mt in candidate.meetings:
             if mt.start.date() != vd.date:
                 continue
             loc = mt.location or mt.participant.location
+            req = reqs.get(mt.participant_id)
             items.append({
                 "type": "meeting", "kind": "meeting", "title": "Individual meeting",
                 "start": mt.start.isoformat(), "end": mt.end.isoformat(),
@@ -308,14 +318,17 @@ def build_itinerary(candidate: m.Candidate) -> dict:
                 "audience": "",
                 "location": loc.name if loc else "",
                 "location_details": (loc.details or "") if loc else "",
-                "note": "",
+                "note": (req.public_note or "") if req else "",
+                "host_label": "", "host": "",
             })
         items.sort(key=lambda x: x["start"])
         days.append({"date": vd.date.isoformat(), "start": vd.start_time.isoformat(timespec="minutes"),
-                     "end": vd.end_time.isoformat(timespec="minutes"), "items": items})
+                     "end": vd.end_time.isoformat(timespec="minutes"), "items": items,
+                     "kind": vd.kind or "interview", "note": vd.note or ""})
     search = candidate.search
     return {
-        "candidate": {"id": candidate.id, "name": candidate.name, "note": candidate.public_note or ""},
+        "candidate": {"id": candidate.id, "name": candidate.name, "note": candidate.public_note or "",
+                      "affiliation": candidate.affiliation or ""},
         "search": {"name": search.name, "department": search.department, "timezone": search.timezone,
                    "contact_name": search.coordinator_name or "", "contact_email": search.coordinator_email or ""},
         "days": days,
@@ -330,8 +343,20 @@ def has_unpublished_changes(candidate: m.Candidate) -> bool:
     v = latest_version(candidate)
     if v is None:
         return bool(candidate.meetings or candidate.fixed_events)
-    return v.snapshot.get("days") != build_itinerary(candidate)["days"] or \
-        v.snapshot.get("candidate", {}).get("note") != (candidate.public_note or "")
+    cur = build_itinerary(candidate)
+    old = _normalized(v.snapshot)
+    return old["days"] != cur["days"] or old["candidate"] != cur["candidate"]
+
+
+_ITEM_DEFAULTS = {"location_details": "", "note": "", "host_label": "", "host": "", "audience": ""}
+
+
+def _normalized(snap: dict) -> dict:
+    """Fill in fields that snapshots published by older app versions don't have, so an
+    upgrade alone never makes a published itinerary look changed."""
+    days = [{"kind": "interview", "note": "", **d,
+             "items": [{**_ITEM_DEFAULTS, **it} for it in d.get("items", [])]} for d in snap.get("days", [])]
+    return {"days": days, "candidate": {"affiliation": "", **snap.get("candidate", {})}}
 
 
 def blocking_issues(s: Session, candidate: m.Candidate) -> list[Issue]:
@@ -369,8 +394,10 @@ def publish(s: Session, candidate: m.Candidate, actor: str, note: str | None = N
     return v
 
 
-def published_items_for_participant(search: m.Search, participant_id: int) -> list[dict]:
-    """Faculty view: only PUBLISHED meetings/events that involve this person."""
+def published_items_for_participant(search: m.Search, participant_id: int, include_signups: bool = False) -> list[dict]:
+    """Faculty view: only PUBLISHED meetings/events that involve this person.
+    With include_signups, group events the person signed up for are added right away
+    (it was their own choice, so there is nothing to wait for)."""
     out = []
     for c in search.candidates:
         v = latest_version(c)
@@ -380,6 +407,12 @@ def published_items_for_participant(search: m.Search, participant_id: int) -> li
             for it in d["items"]:
                 if any(p["id"] == participant_id for p in it["participants"]):
                     out.append({**it, "candidate": c.name, "version": v.version_number})
+    if include_signups:
+        seen = {(x["candidate"], x["start"], x.get("title")) for x in out if x["type"] == "event"}
+        for e in rsvp_events(search):
+            if any(a.id == participant_id for a in e.attendees) and \
+                    (e.candidate.name, e.start.isoformat(), e.title) not in seen:
+                out.append({**_event_item(e), "candidate": e.candidate.name, "version": None})
     return sorted(out, key=lambda x: x["start"])
 
 
@@ -398,21 +431,29 @@ def import_participants_csv(s: Session, search: m.Search, raw: bytes, actor: str
     text = raw.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
     cols = {c.strip().lower() for c in (reader.fieldnames or [])}
-    if not {"name", "email"} <= cols:
-        raise ServiceError("The CSV needs at least 'name' and 'email' columns.")
+    if "name" not in cols:
+        raise ServiceError("The CSV needs at least a 'name' column (and usually 'email').")
     created = updated = 0
     errors: list[str] = []
     cand_by_name = {c.name.lower(): c for c in search.candidates}
     loc_by_name = {l.name.lower(): l for l in search.locations}
     for n, row in enumerate(reader, start=2):
         row = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        if not row.get("name") or "@" not in row.get("email", ""):
-            errors.append(f"Row {n}: missing name or a valid email — skipped.")
+        email = row.get("email", "")
+        if not row.get("name"):
+            errors.append(f"Row {n}: no name — skipped.")
             continue
-        p = s.scalar(select(m.Participant).where(m.Participant.search_id == search.id,
-                                                 func.lower(m.Participant.email) == row["email"].lower()))
+        if email and "@" not in email:
+            errors.append(f"Row {n}: “{email}” isn't an email address — skipped.")
+            continue
+        if email:  # match on email; people without one are matched on name
+            p = s.scalar(select(m.Participant).where(m.Participant.search_id == search.id,
+                                                     func.lower(m.Participant.email) == email.lower()))
+        else:
+            p = s.scalar(select(m.Participant).where(m.Participant.search_id == search.id,
+                                                     func.lower(m.Participant.name) == row["name"].lower()))
         if p is None:
-            p = m.Participant(search_id=search.id, name=row["name"], email=row["email"])
+            p = m.Participant(search_id=search.id, name=row["name"], email=email)
             s.add(p)
             created += 1
         else:
@@ -480,8 +521,14 @@ class SearchStats:
         return round(100 * self.submitted / self.participants) if self.participants else 0
 
 
+def invited_participants(search: m.Search) -> list[m.Participant]:
+    """People whose availability we need: active and on at least one candidate's meeting list."""
+    asked = {r.participant_id for c in search.candidates for r in c.requirements}
+    return [p for p in search.participants if p.active and p.id in asked]
+
+
 def search_stats(s: Session, search: m.Search) -> tuple[SearchStats, list[Issue]]:
-    active = [p for p in search.participants if p.active]
+    active = invited_participants(search)
     prob = load_problem(s, search.id)
     issues = detect(prob)
     scheduled = {(x.candidate_id, x.participant_id) for x in prob.meetings}
@@ -509,7 +556,7 @@ def free_windows_text(participant: m.Participant, d: date) -> str:
 # ------------------------------------------------------------------ setup operations
 def save_candidate(s: Session, search: m.Search, actor: str, *, candidate: m.Candidate | None, name: str,
                    email: str | None, public_note: str | None, internal_notes: str | None,
-                   expected_version: int | None = None) -> m.Candidate:
+                   expected_version: int | None = None, affiliation: str | None = None) -> m.Candidate:
     if not name.strip():
         raise ValidationError("Candidate name is required.")
     if candidate is not None and expected_version is not None and candidate.version_id != expected_version:
@@ -521,6 +568,8 @@ def save_candidate(s: Session, search: m.Search, actor: str, *, candidate: m.Can
     candidate.name = name.strip()
     candidate.email = (email or "").strip() or None
     candidate.public_note = (public_note or "").strip() or None
+    if affiliation is not None:
+        candidate.affiliation = affiliation.strip() or None
     candidate.internal_notes = (internal_notes or "").strip() or None
     s.flush()
     audit(s, search.id, actor, "candidate_created" if new else "candidate_updated",
@@ -528,9 +577,11 @@ def save_candidate(s: Session, search: m.Search, actor: str, *, candidate: m.Can
     return candidate
 
 
-def replace_visit_days(s: Session, candidate: m.Candidate, rows: list[tuple[date, time, time]], actor: str) -> None:
+def replace_visit_days(s: Session, candidate: m.Candidate, rows: list[tuple], actor: str) -> None:
+    """rows: (date, start, end) or (date, start, end, kind, note)."""
+    rows = [tuple(r) + (("interview", None)[len(r) - 3:] if len(r) < 5 else ()) for r in rows]
     seen = set()
-    for d, a, b in rows:
+    for d, a, b, *_ in rows:
         if d in seen:
             raise ValidationError(f"{fmt_date(d, long=False)} is listed twice.")
         if not (a and b) or b <= a:
@@ -539,17 +590,20 @@ def replace_visit_days(s: Session, candidate: m.Candidate, rows: list[tuple[date
     for vd in list(candidate.visit_days):
         candidate.visit_days.remove(vd)
     s.flush()
-    for d, a, b in sorted(rows):
-        candidate.visit_days.append(m.VisitDay(date=d, start_time=a, end_time=b))
+    for d, a, b, kind, note in sorted(rows, key=lambda r: r[0]):
+        candidate.visit_days.append(m.VisitDay(date=d, start_time=a, end_time=b,
+                                               kind="travel" if kind == "travel" else "interview",
+                                               note=(note or "").strip() or None))
     s.flush()
     audit(s, candidate.search_id, actor, "visit_days_updated",
-          f"Visit days for {candidate.name}: " + (", ".join(fmt_date(d, long=False) for d, _, _ in sorted(rows)) or "none"),
+          f"Visit days for {candidate.name}: " + (", ".join(fmt_date(r[0], long=False) for r in sorted(rows, key=lambda r: r[0])) or "none"),
           "candidate", candidate.id)
 
 
 def save_event(s: Session, candidate: m.Candidate, actor: str, *, event: m.FixedEvent | None, title: str, kind: str,
                start: datetime, end: datetime, location_id: int | None, audience: str | None,
-               attendee_ids: list[int], public_note: str | None = None) -> m.FixedEvent:
+               attendee_ids: list[int], public_note: str | None = None, host_label: str | None = None,
+               host: str | None = None, needs_host: bool = False, rsvp_open: bool = False) -> m.FixedEvent:
     if not title.strip():
         raise ValidationError("Give the event a title.")
     if end <= start:
@@ -563,6 +617,9 @@ def save_event(s: Session, candidate: m.Candidate, actor: str, *, event: m.Fixed
     event.title, event.kind, event.start, event.end = title.strip(), kind, start, end
     event.location_id, event.audience = location_id, (audience or "").strip() or None
     event.public_note = (public_note or "").strip() or None
+    event.host_label = (host_label or "").strip() or None
+    event.host = (host or "").strip() or None
+    event.needs_host, event.rsvp_open = bool(needs_host), bool(rsvp_open)
     event.attendees = [s.get(m.Participant, i) for i in attendee_ids]
     s.flush()
     audit(s, candidate.search_id, actor, "event_saved",
@@ -578,10 +635,12 @@ def delete_event(s: Session, event: m.FixedEvent, actor: str) -> None:
     s.flush()
 
 
-def save_requirements(s: Session, candidate: m.Candidate, rows: list[tuple[int, str, int]], actor: str) -> None:
-    """rows: (participant_id, 'Required'|'Optional'|'Not meeting', duration)."""
+def save_requirements(s: Session, candidate: m.Candidate, rows: list[tuple], actor: str) -> None:
+    """rows: (participant_id, 'Required'|'Optional'|'Not meeting', duration[, itinerary note])."""
     changed = 0
-    for pid, choice, dur in rows:
+    for row in rows:
+        pid, choice, dur = row[0], row[1], row[2]
+        note = row[3] if len(row) > 3 else None
         req = next((r for r in candidate.requirements if r.participant_id == pid), None)
         if choice == "Not meeting":
             if req is not None:
@@ -596,6 +655,11 @@ def save_requirements(s: Session, candidate: m.Candidate, rows: list[tuple[int, 
         if req.required != (choice == "Required") or req.duration_minutes != int(dur):
             changed += 1
         req.required, req.duration_minutes = choice == "Required", int(dur)
+        if len(row) > 3:
+            note = (note or "").strip() or None
+            if note != req.public_note:
+                changed += 1
+            req.public_note = note
     s.flush()
     audit(s, candidate.search_id, actor, "requirements_updated",
           f"Updated meeting list for {candidate.name} ({changed} change(s))", "candidate", candidate.id)
@@ -621,10 +685,13 @@ def delete_candidate(s: Session, candidate: m.Candidate, actor: str) -> None:
 def save_participant(s: Session, search: m.Search, actor: str, *, participant: m.Participant | None, name: str,
                      email: str, role_title: str | None, location_id: int | None, preferred_duration: int | None,
                      active: bool = True) -> m.Participant:
-    if not name.strip() or "@" not in (email or ""):
-        raise ValidationError("A name and a valid email are required.")
+    email = (email or "").strip()
+    if not name.strip():
+        raise ValidationError("A name is required.")
+    if email and "@" not in email:
+        raise ValidationError(f"“{email}” doesn't look like an email address. Leave it blank if there isn't one.")
     dup = s.scalar(select(m.Participant).where(m.Participant.search_id == search.id,
-                                               func.lower(m.Participant.email) == email.strip().lower()))
+                                               func.lower(m.Participant.email) == email.lower())) if email else None
     if dup is not None and dup is not participant:
         raise ValidationError(f"{email} is already in the participant list ({dup.name}).")
     new = participant is None
@@ -650,3 +717,143 @@ def delete_participant(s: Session, p: m.Participant, actor: str) -> None:
     audit(s, p.search_id, actor, "participant_deleted", f"Removed participant {p.name}", "participant", p.id)
     s.delete(p)
     s.flush()
+
+
+# ------------------------------------------------------------------ logistics, RSVPs, copying
+def open_logistics(search: m.Search) -> list[m.FixedEvent]:
+    """Events that still need a driver / escort / host."""
+    return [e for c in search.candidates for e in c.fixed_events if e.needs_host and not (e.host or "").strip()]
+
+
+def rsvp_events(search: m.Search) -> list[m.FixedEvent]:
+    return sorted([e for c in search.candidates for e in c.fixed_events if e.rsvp_open], key=lambda e: e.start)
+
+
+def set_rsvp(s: Session, participant: m.Participant, event: m.FixedEvent, attending: bool, actor: str) -> None:
+    if not event.rsvp_open:
+        raise ServiceError("Sign-up for this event is closed.")
+    here = participant in event.attendees
+    if attending and not here:
+        event.attendees.append(participant)
+    elif not attending and here:
+        event.attendees.remove(participant)
+    else:
+        return
+    s.flush()
+    audit(s, participant.search_id, actor, "rsvp",
+          f"{participant.name} {'will attend' if attending else 'will not attend'} “{event.title}” "
+          f"({event.candidate.name}, {fmt_date(event.start, long=False)})", "event", event.id)
+
+
+def _shift(dt_: datetime, src_day: date, dst_day: date) -> datetime:
+    return datetime.combine(dst_day, dt_.time()) if dt_.date() == src_day else dt_ + (dst_day - src_day)
+
+
+def copy_events(s: Session, src: m.Candidate, dst: m.Candidate, actor: str, replace: bool = False) -> int:
+    """Copy fixed events from one candidate to another, matching visit days in order
+    (1st day → 1st day, 2nd → 2nd ...). Attendees, hosts and instructions come along."""
+    sd = sorted(d.date for d in src.visit_days)
+    dd = sorted(d.date for d in dst.visit_days)
+    if not sd or not dd:
+        raise ValidationError("Both candidates need visit days first.")
+    if len(sd) != len(dd):
+        raise ValidationError(f"{src.name} has {len(sd)} visit day(s) but {dst.name} has {len(dd)}. "
+                              "Give them the same number of days first.")
+    mapping = dict(zip(sd, dd))
+    if replace:
+        for e in list(dst.fixed_events):
+            dst.fixed_events.remove(e)
+        s.flush()
+    n = 0
+    for e in src.fixed_events:
+        day = mapping.get(e.start.date())
+        if day is None:
+            continue
+        ne = m.FixedEvent(title=e.title, kind=e.kind, start=_shift(e.start, e.start.date(), day),
+                          end=_shift(e.end, e.start.date(), day), location_id=e.location_id, audience=e.audience,
+                          public_note=e.public_note, host_label=e.host_label, host=e.host, needs_host=e.needs_host,
+                          rsvp_open=e.rsvp_open)
+        ne.attendees = [] if e.rsvp_open else list(e.attendees)  # RSVPs are per event, so start empty
+        dst.fixed_events.append(ne)
+        n += 1
+    s.flush()
+    audit(s, dst.search_id, actor, "events_copied", f"Copied {n} event(s) from {src.name} to {dst.name}",
+          "candidate", dst.id)
+    return n
+
+
+def clone_candidate(s: Session, src: m.Candidate, name: str, first_day: date, actor: str) -> m.Candidate:
+    """New candidate with the same visit structure as `src`, starting on `first_day`:
+    visit days (same spacing, hours, travel/interview, notes), fixed events and meeting list."""
+    if not src.visit_days:
+        raise ValidationError(f"{src.name} has no visit days to copy.")
+    c = save_candidate(s, src.search, actor, candidate=None, name=name, email=None,
+                       public_note=src.public_note, internal_notes=None)
+    base = min(d.date for d in src.visit_days)
+    for vd in sorted(src.visit_days, key=lambda v: v.date):
+        c.visit_days.append(m.VisitDay(date=first_day + (vd.date - base), start_time=vd.start_time,
+                                       end_time=vd.end_time, kind=vd.kind, note=vd.note))
+    for r in src.requirements:
+        c.requirements.append(m.Requirement(participant_id=r.participant_id, required=r.required,
+                                            duration_minutes=r.duration_minutes, location_id=r.location_id,
+                                            public_note=r.public_note))
+    s.flush()
+    copy_events(s, src, c, actor)
+    return c
+
+
+# ------------------------------------------------------------------ app settings (logo)
+LOGO_LIGHT = "logo_light"  # for white / light backgrounds (PDFs, itineraries)
+LOGO_DARK = "logo_dark"  # for the dark sidebar
+
+
+def get_setting_blob(s: Session, key: str) -> bytes | None:
+    row = s.get(m.AppSetting, key)
+    return row.blob_value if row else None
+
+
+def set_setting_blob(s: Session, key: str, data: bytes | None, actor: str) -> None:
+    row = s.get(m.AppSetting, key)
+    if data is None:
+        if row:
+            s.delete(row)
+    else:
+        if row is None:
+            row = m.AppSetting(key=key)
+            s.add(row)
+        row.blob_value = data
+    audit(s, None, actor, "branding_updated", f"{'Removed' if data is None else 'Uploaded'} {key.replace('_', ' ')}")
+
+
+# ------------------------------------------------------------------ setup progress
+@dataclass
+class Step:
+    title: str
+    done: bool
+    hint: str
+    page: str
+
+
+def setup_steps(search: m.Search) -> list[Step]:
+    cands = search.candidates
+    invited = invited_participants(search)
+    submitted = [p for p in invited if p.submitted_at]
+    reqs = [r for c in cands for r in c.requirements if r.required]
+    placed = {(mt.candidate_id, mt.participant_id) for c in cands for mt in c.meetings}
+    return [
+        Step("Add candidates and visit days", bool(cands) and all(c.visit_days for c in cands),
+             "Name, dates, interview hours; mark arrival/departure-only days as travel days.", "candidates"),
+        Step("Enter fixed events", bool(cands) and all(c.fixed_events for c in cands),
+             "Talks, teaching demo, meals, pick-ups. Copy one candidate's events to the other.", "candidates"),
+        Step("Add participants", bool(search.participants), "Faculty, administrators, guests (CSV import works).",
+             "participants"),
+        Step("Choose who meets whom", bool(reqs), "Required vs optional one-on-ones per candidate.", "candidates"),
+        Step("Send availability links", bool(invited) and all(p.last_reminded_at or p.submitted_at for p in invited),
+             "Everyone on a meeting list gets a personal link.", "responses"),
+        Step("Collect availability", bool(invited) and len(submitted) >= 0.8 * len(invited),
+             f"{len(submitted)} of {len(invited)} have answered.", "responses"),
+        Step("Build the schedule", bool(reqs) and all((r.candidate_id, r.participant_id) in placed for r in reqs),
+             "Use the scheduling assistant, then fine-tune in the workspace.", "assistant"),
+        Step("Publish itineraries", bool(cands) and all(c.versions for c in cands),
+             "Faculty and candidates only see published versions.", "itineraries"),
+    ]

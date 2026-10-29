@@ -95,7 +95,7 @@ def detect(prob: Problem, candidate_id: int | None = None) -> list[Issue]:
         if not days:
             issues.append(Issue(
                 ERROR, "not_visit_day",
-                f"Meeting with {who} is on {fmt_date(mt.start, long=False)}, which is not one of {cand}'s visit days.",
+                f"Meeting with {who} is on {fmt_date(mt.start, long=False)}, which is not one of {cand}'s interview days.",
                 mt.candidate_id, mt.participant_id, ids,
             ))
         elif not (days[0].start <= mt.start and mt.end <= days[0].end):

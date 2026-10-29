@@ -15,6 +15,8 @@ CSS = """
 h1, h2, h3 { letter-spacing: -0.01em; }
 [data-testid="stSidebar"] .sb-brand { padding: 4px 4px 14px; border-bottom: 1px solid #2A4A3B; margin-bottom: 8px; }
 .sb-brand .o { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: #9FD3B6; font-weight: 700; }
+[data-testid="stSidebarHeader"] { height: auto; min-height: 3.75rem; padding-top: 1rem; }
+[data-testid="stSidebarLogo"] { height: 2.9rem !important; max-width: 13.5rem; object-fit: contain; object-position: left center; }
 .sb-brand .u { font-family: "Source Serif 4", Georgia, serif; font-size: 17px; color: #F2F6F3; line-height: 1.25; margin-top: 2px; }
 .eyebrow { font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--green); font-weight: 700; margin-bottom: 2px; }
 .ph-title { font-family: "Source Serif 4", Georgia, serif; font-size: 2.05rem; font-weight: 600; line-height: 1.15; margin: 0 0 4px; color: var(--ink); }
@@ -71,6 +73,18 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 4px 0 10px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 16px; height: 12px; border-radius: 3px; display: inline-block; }
+.steps { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0 10px; list-style: none;
+         padding: 0; margin: 2px 0 10px; }
+@media (max-width: 900px) { .steps { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 10px; } }
+.steps li { padding: 9px 4px 6px 0; font-size: 12.5px; line-height: 1.3; color: var(--muted); border-top: 3px solid #E2DFD5; }
+.steps li .n { display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+.steps li.done { border-top-color: var(--green); color: var(--ink); }
+.steps li.done .n { color: var(--green); }
+.steps li.next { border-top-color: #C98A00; color: var(--ink); font-weight: 600; }
+.steps li.next .n { color: var(--amber); }
+.nextstep { background: #fff; border: 1px solid var(--rule); border-left: 4px solid #C98A00; border-radius: 6px;
+            padding: 10px 14px; margin: 4px 0 6px; font-size: 14px; }
+.nextstep b { font-weight: 650; }
 .faculty-hero { border-left: 4px solid var(--green); padding: 4px 0 4px 16px; margin-bottom: 18px; }
 @media print {
   [data-testid="stSidebar"], header, [data-testid="stToolbar"], .no-print, [data-testid="stDownloadButton"], .stButton { display: none !important; }
@@ -144,6 +158,30 @@ def attention_list(rows: list[tuple[str, str, str, str]]) -> None:
     st.html(f"<ul class='att'>{''.join(items)}</ul>")
 
 
-def sidebar_brand(org: str, unit: str) -> None:
-    st.sidebar.html(f"<div class='sb-brand'><div class='o'>{escape(org)}</div><div class='u'>{escape(unit)}</div>"
+def sidebar_brand(org: str, unit: str, logo: bytes | None = None) -> None:
+    """Logo at the very top of the sidebar (st.logo); department name under the menu."""
+    if logo:
+        st.logo(logo, size="large")
+    top = "" if logo else f"<div class='o'>{escape(org)}</div>"
+    st.sidebar.html(f"<div class='sb-brand'>{top}<div class='u'>{escape(unit)}</div>"
                     f"<div style='font-size:12px;color:#9DB5A8;margin-top:4px'>Faculty search · Interview scheduling</div></div>")
+
+
+def logo_img(img: bytes | None, alt: str, height: int = 48) -> str:
+    if not img:
+        return ""
+    from ..core.branding import data_uri
+
+    return (f"<img src='{data_uri(img)}' alt='{escape(alt)}' "
+            f"style='max-height:{height}px;max-width:280px;display:block;margin-bottom:12px'>")
+
+
+def steps(items: list[tuple[str, bool]]) -> None:
+    """Setup progress: (title, done). The first unfinished step is highlighted."""
+    first_open = next((i for i, (_, done) in enumerate(items) if not done), None)
+    lis = []
+    for i, (title, done) in enumerate(items):
+        cls = "done" if done else ("next" if i == first_open else "")
+        tag = "✓ Done" if done else ("Next" if i == first_open else f"Step {i + 1}")
+        lis.append(f"<li class='{cls}'><span class='n'>{tag}</span>{escape(title)}</li>")
+    st.html(f"<ol class='steps' aria-label='Setup progress'>{''.join(lis)}</ol>")

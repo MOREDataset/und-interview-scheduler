@@ -1,0 +1,63 @@
+{
+  "_about": "FICTIONAL example template. Every name, room and email is invented. Copy this file, replace the content with your real search (keep the real file private, not in this repository), and load it under Search settings → Templates.",
+  "search": {
+    "name": "EXAMPLE — Lecturer search (fictional)",
+    "department": "Department of Communication",
+    "timezone": "America/Chicago",
+    "slot_minutes": 15,
+    "start_step_minutes": 10,
+    "buffer_minutes": 0,
+    "default_meeting_minutes": 30,
+    "default_location": "Example Hall 200",
+    "availability_deadline": "2030-02-20T17:00",
+    "coordinator_name": "Example Coordinator",
+    "coordinator_email": "coordinator@example.edu"
+  },
+  "locations": [
+    {"name": "Example Hall 200", "details": "Main office (fictional)"},
+    {"name": "Example Hall 210", "details": "Chair's office (fictional)"},
+    {"name": "Example Lecture Room", "details": "Fictional classroom"},
+    {"name": "Example Airport", "details": "Arrivals curb"},
+    {"name": "Example Hotel", "details": "Lobby"},
+    {"name": "Restaurant to be confirmed"}
+  ],
+  "participants": [
+    {"name": "Dr. Alex Example", "email": "alex.example@example.edu", "role": "Department Chair", "location": "Example Hall 210"},
+    {"name": "Dr. Sam Sample", "email": "sam.sample@example.edu", "role": "Professor"},
+    {"name": "Dr. Jo Placeholder", "email": "jo.placeholder@example.edu", "role": "Associate Professor"},
+    {"name": "Pat Guest", "role": "Community partner (no university email)"}
+  ],
+  "candidates": [
+    {
+      "name": "Candidate 1 (fictional)",
+      "affiliation": "Instructor, Example College",
+      "public_note": "Welcome! Please contact the coordinator with any questions.",
+      "days": [
+        {"date": "2030-03-03", "start": "14:00", "end": "20:00", "kind": "travel", "note": "Arrival day."},
+        {"date": "2030-03-04", "start": "08:30", "end": "16:00", "kind": "interview", "note": "Breakfast at the hotel."}
+      ],
+      "events": [
+        {"date": "2030-03-03", "start": "14:30", "end": "15:00", "title": "Arrival at the airport", "kind": "arrival",
+         "location": "Example Airport", "host_label": "Airport pick-up", "needs_host": true},
+        {"date": "2030-03-03", "start": "18:30", "end": "20:00", "title": "Dinner with the search committee", "kind": "meal",
+         "location": "Restaurant to be confirmed", "host_label": "Transportation by", "host": "Dr. Alex Example",
+         "rsvp": true, "attendees": ["Dr. Alex Example"]},
+        {"date": "2030-03-04", "start": "08:20", "end": "08:30", "title": "Pick-up at the hotel", "kind": "other",
+         "location": "Example Hotel", "host_label": "Driver", "needs_host": true},
+        {"date": "2030-03-04", "start": "08:30", "end": "09:15", "title": "Meeting with the Department Chair", "kind": "other",
+         "location": "Example Hall 210", "attendees": ["Dr. Alex Example"]},
+        {"date": "2030-03-04", "start": "10:00", "end": "11:00", "title": "Teaching demonstration", "kind": "teaching",
+         "location": "Example Lecture Room", "audience": "Students and faculty", "rsvp": true,
+         "note": "Please prepare a 30-minute class session."}
+      ],
+      "meetings": [
+        {"participant": "Dr. Sam Sample", "required": true},
+        {"participant": "Dr. Jo Placeholder", "required": true, "duration": 20},
+        {"participant": "Pat Guest", "required": false, "note": "Informal conversation"}
+      ],
+      "draft_meetings": [
+        {"participant": "Dr. Sam Sample", "date": "2030-03-04", "start": "11:10", "end": "11:40"}
+      ]
+    }
+  ]
+}

@@ -82,7 +82,7 @@ def render(ctx) -> None:
     )
 
     sections = _sections(search, prob, show_dates, show_cands, who, sev)
-    action = timeline(sections, key="ws_tl", step=search.slot_minutes,
+    action = timeline(sections, key="ws_tl", step=search.start_step_minutes or search.slot_minutes,
                       empty_text="No visit days to show for this selection.")
     if action:
         _handle(ctx, action)
@@ -132,8 +132,11 @@ def _sections(search, prob, show_dates, show_cands, who, sev) -> list[dict]:
         if not lanes:
             continue
         vds = [v for c in lanes for v in c.visit_days if v.date == d]
-        lo = ((min(_mins(v.start_time) for v in vds) - 30) // 60) * 60  # whole hours keep grid lines aligned
-        hi = -(-(max(_mins(v.end_time) for v in vds) + 30) // 60) * 60
+        evs = [e for c in lanes for e in c.fixed_events if e.start.date() == d]
+        # Whole hours keep grid lines aligned; stretch to fit early pick-ups and evening dinners.
+        lo = ((min([_mins(v.start_time) for v in vds] + [_mins(e.start) for e in evs]) - 30) // 60) * 60
+        hi = -(-(max([_mins(v.end_time) for v in vds] + [_mins(e.end) for e in evs]) + 30) // 60) * 60
+        lo, hi = max(lo, 0), min(hi, 24 * 60)
         rows = [{"kind": "group", "label": "Candidates", "items": []}]
         for c in lanes:
             vd = next(v for v in c.visit_days if v.date == d)
@@ -155,9 +158,15 @@ def _sections(search, prob, show_dates, show_cands, who, sev) -> list[dict]:
                               "u": fmt_range(mt.start, mt.end),
                               "title": f"{pname.get(mt.participant_id)} with {_short(c.name)}, {fmt_range(mt.start, mt.end)}"
                                        + (" — overridden: " + mt.override_reason if mt.override_reason else "")})
-            rows.append({"kind": "cand", "label": _short(c.name), "sub": f"{fmt_range(datetime.combine(d, vd.start_time), datetime.combine(d, vd.end_time))} · {theme.STATUS_LABEL[c.status][1]}",
-                         "lane": {"cid": c.id}, "items": items})
-        if who != "Hide participants":
+            if vd.is_interview:
+                sub = (f"{fmt_range(datetime.combine(d, vd.start_time), datetime.combine(d, vd.end_time))} · "
+                       f"{theme.STATUS_LABEL[c.status][1]}")
+                rows.append({"kind": "cand", "label": _short(c.name), "sub": sub, "lane": {"cid": c.id}, "items": items})
+            else:  # travel days hold events only; no one-on-ones are placed there
+                rows.append({"kind": "cand", "label": _short(c.name), "sub": "Travel day · events only",
+                             "items": items[1:]})
+        interview = any(v.is_interview for v in vds)
+        if who != "Hide participants" and interview:
             if who == "Everyone":
                 people = [p for p in search.participants if p.active]
             else:
@@ -265,8 +274,10 @@ def _override_dialog(ctx, pending: dict) -> None:
 
 def _slot_choices(ctx, cand: m.Candidate) -> list[datetime]:
     out = []
-    step = ctx.search.slot_minutes
+    step = ctx.search.start_step_minutes or ctx.search.slot_minutes
     for v in cand.visit_days:
+        if not v.is_interview:
+            continue
         t = datetime.combine(v.date, v.start_time)
         end = datetime.combine(v.date, v.end_time)
         while t < end:
@@ -309,7 +320,9 @@ def _meeting_dialog(ctx, mt: m.Meeting) -> None:
                       format_func=lambda i: "—" if i is None else lname[i])
     sug = _suggestions(ctx, c.id, p.id, int(dur), key=f"sug_{mt.id}")
     choices = _slot_choices(ctx, c)
-    default = sug or (mt.start if mt.start in choices else choices[0])
+    if mt.start not in choices:  # never silently move a meeting that sits off the start-time grid
+        choices = sorted(choices + [mt.start])
+    default = sug or mt.start
     start = st.selectbox("Start time", choices, index=choices.index(default) if default in choices else 0,
                          format_func=lambda x: f"{fmt_date(x, long=False)} {fmt_time(x)}")
     locked = st.toggle("Lock (the scheduling assistant will never move it)", mt.locked)
@@ -372,7 +385,7 @@ def _add_dialog(ctx, cid: int | None, start: datetime | None, pid: int | None) -
     dur = a.number_input("Duration (minutes)", 5, 240, r.duration_minutes if r else (p.preferred_duration or search.default_meeting_minutes), step=5)
     locs = [None] + [l.id for l in search.locations]
     lname = {l.id: l.name for l in search.locations}
-    loc_default = (r.location_id if r and r.location_id else p.location_id)
+    loc_default = sv.default_location_id_for(r, p)
     loc = b.selectbox("Location", locs, index=locs.index(loc_default) if loc_default in locs else 0,
                       format_func=lambda i: "—" if i is None else lname[i])
     sug = _suggestions(ctx, cid, pid, int(dur), key=f"sug_new_{cid}_{pid}")
@@ -392,7 +405,7 @@ def _add_dialog(ctx, cid: int | None, start: datetime | None, pid: int | None) -
 def _person_dialog(ctx, p: m.Participant) -> None:
     search = ctx.search
     st.html(f"<div style='font-size:1.2rem;font-weight:600'>{escape(p.name)}</div>"
-            f"<div class='small-muted'>{escape(p.role_title or '')} · {escape(p.email)}</div>")
+            f"<div class='small-muted'>{escape(' · '.join(x for x in (p.role_title, p.email) if x))}</div>")
     st.markdown("**Submitted availability**" if p.submitted_at else "**No availability submitted yet**")
     for d in sv.visit_dates(search):
         st.html(f"<div>{fmt_date(d, long=False)}: <span class='small-muted'>{escape(sv.free_windows_text(p, d))}</span></div>")

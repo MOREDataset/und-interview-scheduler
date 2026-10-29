@@ -41,16 +41,16 @@ def render(ctx) -> None:
                      f"Availability collection {'reopened' if search.availability_open else 'closed'}")
 
     dates = sv.visit_dates(search)
+    invited = sv.invited_participants(search)
+    left_out = [p for p in search.participants if p.active and p not in invited]
     rows = []
-    for p in search.participants:
-        if not p.active:
-            continue
+    for p in invited:
         covered = sorted(r.date for r in p.responses if r.date in dates)
         n_meet = sum(1 for c in search.candidates for x in c.meetings if x.participant_id == p.id)
         rows.append({"id": p.id, "Participant": p.name, "Status": "✓ Submitted" if p.submitted_at else "▲ Not submitted",
                      "Last submission": _local(p.submitted_at, search.timezone),
                      "Dates covered": f"{len(covered)} / {len(dates)}",
-                     "Scheduled": n_meet, "Last reminded": _local(p.last_reminded_at, search.timezone),
+                     "Scheduled": n_meet, "Last contacted": _local(p.last_reminded_at, search.timezone),
                      "Free time": " · ".join(f"{fmt_date(d, long=False)}: {sv.free_windows_text(p, d)}" for d in dates)
                      if p.submitted_at else "—"})
     df = pd.DataFrame(rows)
@@ -61,8 +61,12 @@ def render(ctx) -> None:
         view = df[df["Status"].str.contains("Not")]
     elif flt == "Submitted" and not df.empty:
         view = df[~df["Status"].str.contains("Not")]
+    if left_out:
+        st.caption(f"Not asked for availability because they aren't on any candidate's meeting list: "
+                   f"{', '.join(p.name for p in left_out)}. Add them under Candidates → Who meets whom if needed.")
     if view.empty:
-        st.info("Nobody in this list.")
+        st.info("Nobody in this list." if invited else
+                "Nobody is on a meeting list yet. Choose who meets whom on the Candidates page first.")
     else:
         ev = st.dataframe(view.drop(columns=["id"]), hide_index=True, width="stretch", on_select="rerun",
                           selection_mode="single-row", key="resp_tbl")
@@ -72,20 +76,38 @@ def render(ctx) -> None:
         else:
             st.caption("Select a row to see that person's availability grid.")
 
-    st.markdown("#### Reminders")
-    missing = [p for p in search.participants if p.active and not p.submitted_at]
+    st.markdown("#### Invitations & reminders")
+    missing = [p for p in invited if not p.submitted_at]
     if not missing:
-        st.success("Everyone has submitted availability.", icon=":material/check_circle:")
+        if invited:
+            st.success("Everyone has submitted availability.", icon=":material/check_circle:")
         return
-    pick = st.multiselect("Who should get a reminder?", [p.id for p in missing], default=[p.id for p in missing],
-                          format_func=lambda i: next(p.name for p in missing if p.id == i))
-    drafts = [(p, notify.availability_request(ctx.settings, search, p, reminder=True)) for p in missing if p.id in pick]
+    st.caption("People who haven't been contacted yet get an invitation; everyone else gets a reminder. "
+               "Each message contains that person's own link.")
+    pick = st.multiselect("Who should get a message?", [p.id for p in missing], default=[p.id for p in missing],
+                          format_func=lambda i: next(f"{p.name} ({'reminder' if p.last_reminded_at else 'invitation'})"
+                                                     for p in missing if p.id == i))
+    chosen = [p for p in missing if p.id in pick]
+    drafts = [(p, notify.availability_request(ctx.settings, search, p, reminder=p.last_reminded_at is not None))
+              for p in chosen if p.email]
+    no_email = [p for p in chosen if not p.email]
+    if no_email:
+        st.html("<p class='small-muted' style='margin:6px 0 2px'>No email address on file — copy the link and send it "
+                "however you usually reach them:</p>")
+        for p in no_email:
+            st.code(notify.invite_link(ctx.settings, p.access_token), language=None)
+            st.caption(f"↑ {p.name}")
+        if st.button(f"Mark {'them' if len(no_email) > 1 else 'this person'} as contacted", icon=":material/done_all:",
+                     key="mark_noemail"):
+            with write(ctx, "Marked as contacted"):
+                for p in no_email:
+                    p.last_reminded_at = m.utcnow()
     if not drafts:
         return
     with st.expander(f"Preview the message ({len(drafts)} recipient{'s' if len(drafts) != 1 else ''})", expanded=False):
-        st.text(f"Subject: {drafts[0][1].subject}\n\n{drafts[0][1].body}")
+        st.text(f"To: {drafts[0][1].to}\nSubject: {drafts[0][1].subject}\n\n{drafts[0][1].body}")
     if ctx.settings.email_enabled:
-        if st.button(f"Send {len(drafts)} reminder email(s)", type="primary", icon=":material/send:"):
+        if st.button(f"Send {len(drafts)} email(s)", type="primary", icon=":material/send:"):
             sent, failed = 0, []
             for p, d in drafts:
                 try:
@@ -94,8 +116,8 @@ def render(ctx) -> None:
                     sent += 1
                 except Exception as exc:  # pragma: no cover - network
                     failed.append(f"{p.name}: {exc}")
-            with write(ctx, f"Sent {sent} reminder(s)", rerun=not failed):
-                sv.audit(ctx.s, search.id, ctx.actor, "reminders_sent", f"Sent {sent} availability reminder(s)")
+            with write(ctx, f"Sent {sent} email(s)", rerun=not failed):
+                sv.audit(ctx.s, search.id, ctx.actor, "reminders_sent", f"Sent {sent} availability email(s)")
             for f in failed:
                 st.error(f)
     else:
@@ -103,11 +125,13 @@ def render(ctx) -> None:
                 "below to open each message in your own email program (the personal link is already included).</p>")
         links = " ".join(f"<a href='{escape(d.mailto)}' style='margin-right:14px'>✉ {escape(p.name)}</a>" for p, d in drafts)
         st.html(f"<div style='line-height:2'>{links}</div>")
-        if st.button("Mark these as reminded", icon=":material/done_all:"):
-            with write(ctx, "Marked as reminded"):
+        st.caption("After sending, mark them as contacted so the next message is worded as a reminder.")
+        if st.button("Mark these as contacted", icon=":material/done_all:"):
+            with write(ctx, "Marked as contacted"):
                 for p, _ in drafts:
                     p.last_reminded_at = m.utcnow()
-                sv.audit(ctx.s, search.id, ctx.actor, "reminders_prepared", f"Prepared {len(drafts)} reminder(s)")
+                sv.audit(ctx.s, search.id, ctx.actor, "reminders_prepared",
+                         f"Prepared {len(drafts)} availability message(s)")
 
 
 def _review(ctx, p: m.Participant) -> None:
@@ -132,5 +156,5 @@ def _review(ctx, p: m.Participant) -> None:
     if edit and st.button("Save on their behalf", type="primary"):
         with write(ctx, f"Saved availability for {p.name}"):
             sv.save_availability(ctx.s, p, {date.fromisoformat(a): b for a, b in dr["cells"].items()},
-                                 actor=f"{ctx.actor} (on behalf of {p.email})", coordinator_override=True)
+                                 actor=f"{ctx.actor} (on behalf of {p.email or p.name})", coordinator_override=True)
             st.session_state.pop(k, None)

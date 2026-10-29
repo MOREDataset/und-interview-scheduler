@@ -51,7 +51,8 @@ def render(ctx) -> None:
                                  captions=[OBJ_HELP[k] for k in OBJECTIVES])
         with b:
             mode = st.radio("What to do with meetings already in the draft", list(MODES), format_func=lambda k: MODES[k])
-            st.html(f"<p class='small-muted'>Rules in force: {search.slot_minutes}-minute start grid · "
+            st.html(f"<p class='small-muted'>Rules in force: meetings start every "
+                    f"{search.start_step_minutes or search.slot_minutes} minutes · "
                     f"{search.buffer_minutes}-minute buffer between items · interview hours per visit day · "
                     "no double-booking of candidates or faculty across all candidates.</p>")
             limit = st.slider("Maximum thinking time (seconds)", 2, 60, 10)
@@ -95,6 +96,8 @@ def render(ctx) -> None:
         if c is None:
             continue
         for vd in c.visit_days:
+            if not vd.is_interview:
+                continue
             d = vd.date
             items = []
             for e in c.fixed_events:
@@ -111,12 +114,12 @@ def render(ctx) -> None:
                     items.append({"type": "proposal", "cls": "proposal", "s": p.start.hour * 60 + p.start.minute,
                                   "e": p.end.hour * 60 + p.end.minute, "t": ("★ " if p.preferred else "") + pname[p.participant_id],
                                   "u": fmt_range(p.start, p.end)})
-            lo = (vd.start_time.hour * 60 + vd.start_time.minute - 30) // 60 * 60
-            hi = -(-(vd.end_time.hour * 60 + vd.end_time.minute + 30) // 60) * 60
+            lo = (min([vd.start_time.hour * 60 + vd.start_time.minute] + [i["s"] for i in items]) - 30) // 60 * 60
+            hi = -(-(max([vd.end_time.hour * 60 + vd.end_time.minute] + [i["e"] for i in items]) + 30) // 60) * 60
             sections.append({"key": f"{cid}-{d}", "label": f"{c.name.split(' (')[0]} — {fmt_date(d)}",
                              "meta": "dashed = proposed", "startMin": lo, "endMin": hi,
                              "rows": [{"kind": "cand", "label": "Itinerary", "items": items}]})
-    timeline(sections, key="prop_tl", step=search.slot_minutes)
+    timeline(sections, key="prop_tl", step=search.start_step_minutes or search.slot_minutes)
 
     left, right = st.columns([1.1, 1], gap="large")
     with left:

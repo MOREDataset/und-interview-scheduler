@@ -17,8 +17,9 @@ from scheduler_app.core import models as m
 from scheduler_app.core.auth import (
     authenticate, candidate_by_token, make_session_token, participant_by_token, read_session_token, user_by_email,
 )
+from scheduler_app.core.branding import load_brand, sidebar_logo
 from scheduler_app.core.config import get_settings
-from scheduler_app.core.db import get_sessionmaker, init_db
+from scheduler_app.core.db import SCHEMA_VERSION, get_sessionmaker, init_db
 from scheduler_app.core.seed import DEMO_COORDINATOR_EMAIL, seed_demo, sync_demo_coordinator
 from scheduler_app.core.services import audit, list_searches
 from scheduler_app.ui import theme
@@ -32,8 +33,10 @@ settings = get_settings()
 
 
 @st.cache_resource
-def _bootstrap() -> bool:
-    """Create tables once per server process; load demo data when enabled and empty."""
+def _bootstrap(schema_version: int) -> bool:
+    """Create tables (and add any new columns) once per server process and schema version;
+    load demo data when enabled and empty. Passing the version means an in-place code update
+    on Streamlit Cloud still upgrades the database."""
     init_db()
     if settings.demo_mode:
         s = get_sessionmaker()()
@@ -47,7 +50,7 @@ def _bootstrap() -> bool:
     return True
 
 
-_bootstrap()
+_bootstrap(SCHEMA_VERSION)
 s = get_sessionmaker()()
 ctx = Ctx(s=s, settings=settings)
 qp = st.query_params
@@ -95,7 +98,8 @@ try:
         left, mid, right = st.columns([1, 1.25, 1])
         with mid:
             st.write("")
-            st.html(f"<div class='eyebrow'>{settings.org_name}</div>"
+            st.html(theme.logo_img(load_brand(s, settings.brand_logo_path).light, settings.org_name, 56)
+                    + f"<div class='eyebrow'>{settings.org_name}</div>"
                     f"<div class='ph-title'>Interview Scheduler</div>"
                     f"<p class='ph-sub'>{settings.unit_name} · Coordinator sign-in</p><hr class='ph-rule'>")
             if sso_ready:
@@ -150,7 +154,7 @@ try:
         settings_page.first_run(ctx)
         st.stop()
 
-    theme.sidebar_brand(settings.org_name, settings.unit_name)
+    theme.sidebar_brand(settings.org_name, settings.unit_name, sidebar_logo(load_brand(s, settings.brand_logo_path)))
     ids = [x.id for x in searches]
     current = st.session_state.get("search_id")
     if current not in ids:

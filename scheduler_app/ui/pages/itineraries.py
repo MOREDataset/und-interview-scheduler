@@ -8,8 +8,9 @@ import pandas as pd
 import streamlit as st
 
 from ...core import exports, notify
+from ...core.branding import load_brand
 from ...core import services as sv
-from ...core.timeutil import fmt_date, fmt_time, utc_to_local
+from ...core.timeutil import fmt_date, fmt_range, fmt_time, utc_to_local
 from .. import theme
 from ..ctx import write
 from .candidate_view import itinerary_html
@@ -36,6 +37,7 @@ def render(ctx) -> None:
 
 def _candidate(ctx, c) -> None:
     s, settings = ctx.s, ctx.settings
+    logo = load_brand(s, settings.brand_logo_path).light
     v = sv.latest_version(c)
     changed = sv.has_unpublished_changes(c)
     errs = sv.blocking_issues(s, c)
@@ -50,7 +52,7 @@ def _candidate(ctx, c) -> None:
     snap = sv.build_itinerary(c) if which == "Draft" else v.snapshot
     left, right = st.columns([2.3, 1], gap="large")
     with left:
-        st.html(itinerary_html(snap, settings.org_name, settings.unit_name, draft=which == "Draft"))
+        st.html(itinerary_html(snap, settings.org_name, settings.unit_name, draft=which == "Draft", logo=logo))
     with right:
         st.markdown("#### Publish")
         if errs:
@@ -74,7 +76,7 @@ def _candidate(ctx, c) -> None:
         st.markdown("#### Downloads")
         pdf_snap = snap
         st.download_button(f"PDF ({which.lower()})", exports.candidate_pdf(pdf_snap, settings.org_name, settings.unit_name,
-                                                                          settings.brand_logo_path, draft=which == "Draft"),
+                                                                          logo, draft=which == "Draft"),
                            file_name=f"itinerary-{_slug(c.name)}-{'draft' if which == 'Draft' else 'v' + str(v.version_number)}.pdf",
                            mime="application/pdf", key=f"dl_pdf_{c.id}", width="stretch", icon=":material/picture_as_pdf:")
         st.download_button("Calendar file (.ics)", exports.candidate_ics(pdf_snap), file_name=f"itinerary-{_slug(c.name)}.ics",
@@ -129,7 +131,7 @@ def _faculty(ctx) -> None:
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
         a, b, c = st.columns(3)
         a.download_button("PDF", exports.participant_pdf(p.name, items, search.timezone, settings.org_name, settings.unit_name,
-                                                         search.name, settings.brand_logo_path),
+                                                         search.name, load_brand(ctx.s, settings.brand_logo_path).light),
                           file_name=f"schedule-{_slug(p.name)}.pdf", mime="application/pdf", width="stretch")
         b.download_button(".ics", exports.participant_ics(p.name, items, search.timezone, search.department),
                           file_name=f"schedule-{_slug(p.name)}.ics", mime="text/calendar", width="stretch")
@@ -145,7 +147,7 @@ def _coordinator(ctx) -> None:
     snaps = [sv.build_itinerary(c) for c in search.candidates]
     a, b = st.columns(2)
     a.download_button("All itineraries — PDF (draft, internal)", exports.master_pdf(snaps, settings.org_name, settings.unit_name,
-                                                                                   settings.brand_logo_path),
+                                                                                   load_brand(ctx.s, settings.brand_logo_path).light),
                       file_name="all-itineraries-draft.pdf", mime="application/pdf", width="stretch",
                       icon=":material/picture_as_pdf:")
     a.download_button("All itineraries — CSV (draft)", exports.itinerary_csv(snaps), file_name="all-itineraries-draft.csv",
@@ -166,3 +168,26 @@ def _coordinator(ctx) -> None:
     b.download_button("Meeting list with internal fields — CSV", df.to_csv(index=False).encode("utf-8-sig"),
                       file_name="meetings-internal.csv", mime="text/csv", width="stretch", disabled=df.empty,
                       icon=":material/lock:")
+
+    st.markdown("#### Logistics & head counts")
+    st.caption("Drivers, escorts and hosts, plus who signed up for group events. Handy for the office, catering "
+               "and reservations.")
+    lrows = []
+    for c in search.candidates:
+        for e in sorted(c.fixed_events, key=lambda e: e.start):
+            if not (e.host_label or e.host or e.needs_host or e.rsvp_open):
+                continue
+            lrows.append({"Candidate": c.name, "Date": fmt_date(e.start, long=False), "Time": fmt_range(e.start, e.end),
+                          "Event": e.title, "Role": e.host_label or "",
+                          "Who": e.host or ("⚠ still needed" if e.needs_host else ""),
+                          "Head count": (len(e.attendees) + 1) if e.rsvp_open else None,
+                          "Faculty attending": ", ".join(a.name for a in e.attendees) if e.rsvp_open else ""})
+    if not lrows:
+        st.info("No drivers, escorts or sign-up events yet. Add them when editing an event on the Candidates page.")
+    else:
+        ldf = pd.DataFrame(lrows)
+        st.dataframe(ldf, hide_index=True, width="stretch",
+                     column_config={"Head count": st.column_config.NumberColumn(
+                         help="Faculty who signed up plus the candidate", format="%d")})
+        st.download_button("Logistics sheet — CSV", ldf.to_csv(index=False).encode("utf-8-sig"),
+                           file_name="logistics.csv", mime="text/csv", icon=":material/local_taxi:")
