@@ -9,6 +9,8 @@ Three entry points share this one app:
 """
 from __future__ import annotations
 
+import os
+
 import streamlit as st
 
 from scheduler_app.core import models as m
@@ -126,10 +128,16 @@ try:
             if not settings.demo_mode and settings.secret_key in ("dev-only-change-me", "CHANGE_ME"):
                 st.error("Administrator: set a real SECRET_KEY in .env before using this app with real data.")
             if settings.demo_mode:
-                st.info(f"**Demo mode.** Sign in as `{DEMO_COORDINATOR_EMAIL}`. The password is the value of "
-                        "`DEMO_COORDINATOR_PASSWORD` in your .env / Streamlit Secrets, or `demo-coordinator` if you "
-                        "didn't set one (or set one shorter than 8 characters).",
-                        icon=":material/science:")
+                raw = os.getenv("DEMO_COORDINATOR_PASSWORD")
+                if raw is None:
+                    where = "No `DEMO_COORDINATOR_PASSWORD` is set, so the password is `demo-coordinator`."
+                elif len(raw.strip()) < 8:
+                    where = ("`DEMO_COORDINATOR_PASSWORD` is shorter than 8 characters, so it is ignored and the "
+                             "password is `demo-coordinator`.")
+                else:
+                    where = (f"The password is the value of `DEMO_COORDINATOR_PASSWORD` from your Secrets / .env "
+                             f"({len(raw.strip())} characters long). It is not your `SECRET_KEY`.")
+                st.info(f"**Demo mode.** Sign in as `{DEMO_COORDINATOR_EMAIL}`. {where}", icon=":material/science:")
         st.stop()
 
     ctx.user = user

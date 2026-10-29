@@ -55,7 +55,9 @@ def authenticate(s: Session, email: str, password: str) -> m.User | None:
     if _throttled(key):
         raise PermissionError("Too many failed attempts. Try again in 15 minutes.")
     user = s.scalar(select(m.User).where(func.lower(m.User.email) == key, m.User.active.is_(True)))
-    if user and verify_password(password, user.password_hash):
+    # Accept accidental leading/trailing spaces from copy-paste.
+    if user and (verify_password(password, user.password_hash)
+                 or (password != password.strip() and verify_password(password.strip(), user.password_hash))):
         _FAILED.pop(key, None)
         return user
     _FAILED[key].append(time.time())
