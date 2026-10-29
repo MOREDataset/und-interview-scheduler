@@ -135,8 +135,8 @@ try:
                     where = ("`DEMO_COORDINATOR_PASSWORD` is shorter than 8 characters, so it is ignored and the "
                              "password is `demo-coordinator`.")
                 else:
-                    where = (f"The password is the value of `DEMO_COORDINATOR_PASSWORD` from your Secrets / .env "
-                             f"({len(raw.strip())} characters long). It is not your `SECRET_KEY`.")
+                    where = ("The password is the value of `DEMO_COORDINATOR_PASSWORD` from your Secrets / .env "
+                             "(not your `SECRET_KEY`).")
                 st.info(f"**Demo mode.** Sign in as `{DEMO_COORDINATOR_EMAIL}`. {where}", icon=":material/science:")
         st.stop()
 
