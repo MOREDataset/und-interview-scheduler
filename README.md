@@ -187,7 +187,7 @@ use the default local file, submitted availability will eventually be lost.
    SECRET_KEY = "paste-a-long-random-string-here"
    APP_BASE_URL = "https://your-app-name.streamlit.app"
    DEMO_MODE = "true"          # set to "false" when you start the real search
-   DEMO_COORDINATOR_PASSWORD = "choose-a-password"
+   DEMO_COORDINATOR_PASSWORD = "choose-a-password"   # sign in as coordinator@example.edu with THIS password (8+ characters)
    ```
    To get a random `SECRET_KEY`, run `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 4. Click **Deploy**. The tables are created automatically on first start.

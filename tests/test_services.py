@@ -218,3 +218,17 @@ def test_csv_import_creates_updates_and_reports(b):
     assert names == ["Everyone Person", "New Person Renamed"]
     req = {(r.participant.name, r.required) for r in a.requirements}
     assert ("New Person Renamed", True) in req and ("Everyone Person", True) in req
+
+
+def test_demo_password_follows_current_setting(s, monkeypatch):
+    from scheduler_app.core.auth import authenticate
+    from scheduler_app.core.seed import DEMO_COORDINATOR_EMAIL, sync_demo_coordinator
+
+    seed_demo(s)
+    assert authenticate(s, DEMO_COORDINATOR_EMAIL, "demo-coordinator")
+    monkeypatch.setenv("DEMO_COORDINATOR_PASSWORD", "a-new-secret-pw")
+    sync_demo_coordinator(s)
+    assert authenticate(s, DEMO_COORDINATOR_EMAIL, "a-new-secret-pw")
+    monkeypatch.setenv("DEMO_COORDINATOR_PASSWORD", "short")
+    sync_demo_coordinator(s)
+    assert authenticate(s, DEMO_COORDINATOR_EMAIL, "demo-coordinator")

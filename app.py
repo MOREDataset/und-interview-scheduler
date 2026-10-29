@@ -17,7 +17,7 @@ from scheduler_app.core.auth import (
 )
 from scheduler_app.core.config import get_settings
 from scheduler_app.core.db import get_sessionmaker, init_db
-from scheduler_app.core.seed import DEMO_COORDINATOR_EMAIL, seed_demo
+from scheduler_app.core.seed import DEMO_COORDINATOR_EMAIL, seed_demo, sync_demo_coordinator
 from scheduler_app.core.services import audit, list_searches
 from scheduler_app.ui import theme
 from scheduler_app.ui.components.cookie import COOKIE, set_cookie
@@ -38,7 +38,8 @@ def _bootstrap() -> bool:
         try:
             if not list_searches(s):
                 seed_demo(s)
-                s.commit()
+            sync_demo_coordinator(s)
+            s.commit()
         finally:
             s.close()
     return True
@@ -125,8 +126,9 @@ try:
             if not settings.demo_mode and settings.secret_key in ("dev-only-change-me", "CHANGE_ME"):
                 st.error("Administrator: set a real SECRET_KEY in .env before using this app with real data.")
             if settings.demo_mode:
-                st.info(f"**Demo mode.** Sign in as `{DEMO_COORDINATOR_EMAIL}` with the demo password "
-                        "(default `demo-coordinator`, or `DEMO_COORDINATOR_PASSWORD` from your .env).",
+                st.info(f"**Demo mode.** Sign in as `{DEMO_COORDINATOR_EMAIL}`. The password is the value of "
+                        "`DEMO_COORDINATOR_PASSWORD` in your .env / Streamlit Secrets, or `demo-coordinator` if you "
+                        "didn't set one (or set one shorter than 8 characters).",
                         icon=":material/science:")
         st.stop()
 

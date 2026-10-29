@@ -55,7 +55,19 @@ def _normalize_db_url(url: str) -> str:
     return url
 
 
+def _load_streamlit_secrets() -> None:
+    """Streamlit copies top-level Secrets into environment variables when it loads them.
+    Make sure that has happened before we read settings (matters on Streamlit Cloud)."""
+    try:
+        from streamlit.runtime.secrets import secrets_singleton
+
+        secrets_singleton.load_if_toml_exists()
+    except Exception:
+        pass
+
+
 def get_settings() -> Settings:
+    _load_streamlit_secrets()
     default_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'scheduler.db'}"
     return Settings(
         database_url=_normalize_db_url(os.getenv("DATABASE_URL", default_db)),

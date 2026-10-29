@@ -69,6 +69,23 @@ def _dt(d: date, hhmm: str) -> datetime:
     return datetime.combine(d, time(h, mm))
 
 
+def sync_demo_coordinator(s: Session) -> None:
+    """Make sure the demo coordinator exists and uses the CURRENT demo password
+    (DEMO_COORDINATOR_PASSWORD, or the default). Called at every app start in demo
+    mode, so changing the password in .env / Streamlit Secrets takes effect after a restart."""
+    from .auth import hash_password, verify_password
+
+    pw = os.getenv("DEMO_COORDINATOR_PASSWORD", DEMO_COORDINATOR_PASSWORD_DEFAULT).strip()
+    if len(pw) < 8:
+        pw = DEMO_COORDINATOR_PASSWORD_DEFAULT  # too short to be accepted; fall back
+    u = s.scalar(select(m.User).where(m.User.email == DEMO_COORDINATOR_EMAIL))
+    if u is None:
+        create_coordinator(s, DEMO_COORDINATOR_EMAIL, "Demo Coordinator", pw)
+    elif not verify_password(pw, u.password_hash) or not u.active:
+        u.password_hash, u.active = hash_password(pw), True
+    s.flush()
+
+
 def seed_demo(s: Session) -> m.Search:
     """Create the demo search (idempotent: does nothing if it already exists)."""
     existing = s.scalar(select(m.Search).where(m.Search.is_demo.is_(True)))
@@ -165,9 +182,7 @@ def seed_demo(s: Session) -> m.Search:
                     requirement_id=next(r.id for r in cand_a.requirements if r.participant_id == chair.id),
                     updated_by="demo seed"))
 
-    pw = os.getenv("DEMO_COORDINATOR_PASSWORD", DEMO_COORDINATOR_PASSWORD_DEFAULT)
-    if s.scalar(select(m.User).where(m.User.email == DEMO_COORDINATOR_EMAIL)) is None:
-        create_coordinator(s, DEMO_COORDINATOR_EMAIL, "Demo Coordinator", pw)
+    sync_demo_coordinator(s)
     audit(s, search.id, "system", "demo_seeded", "Loaded fictional demonstration data")
     s.flush()
     return search
