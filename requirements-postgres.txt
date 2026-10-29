@@ -1,3 +1,2 @@
-# Extra driver for shared PostgreSQL deployments
+# Kept for compatibility: the PostgreSQL driver is now in requirements.txt
 -r requirements.txt
-psycopg[binary]>=3.2

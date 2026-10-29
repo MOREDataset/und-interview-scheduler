@@ -47,10 +47,18 @@ class Settings:
         return bool(self.smtp_host and self.smtp_from)
 
 
+def _normalize_db_url(url: str) -> str:
+    """Accept the plain 'postgres://' / 'postgresql://' URLs that Neon and Supabase hand out."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def get_settings() -> Settings:
     default_db = f"sqlite:///{PROJECT_ROOT / 'data' / 'scheduler.db'}"
     return Settings(
-        database_url=os.getenv("DATABASE_URL", default_db),
+        database_url=_normalize_db_url(os.getenv("DATABASE_URL", default_db)),
         timezone=os.getenv("APP_TIMEZONE", "America/Chicago"),
         demo_mode=_bool("DEMO_MODE", True),
         app_base_url=os.getenv("APP_BASE_URL", "http://localhost:8501").rstrip("/"),

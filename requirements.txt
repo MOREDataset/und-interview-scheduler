@@ -8,6 +8,7 @@ pandas==3.1.0
 bcrypt==5.0.0
 python-dotenv==1.2.4
 tzdata>=2024.1          # time-zone data on systems without it (e.g. Windows)
+psycopg[binary]>=3.2    # PostgreSQL driver (needed for Streamlit Cloud / shared use)
 
 # Optional: university SSO through st.login (OpenID Connect)
 Authlib>=1.3.2
