@@ -166,6 +166,45 @@ the app, but only when you press the send button. Without them, the app gives yo
 
 ---
 
+## 6a. Putting it online with Streamlit Community Cloud (free)
+
+Streamlit Cloud runs the app straight from this GitHub repository. **Important:** on Streamlit Cloud,
+local files are wiped whenever the app restarts, so you must use a hosted PostgreSQL database. If you
+use the default local file, submitted availability will eventually be lost.
+
+**Step 1: create a free PostgreSQL database (about 3 minutes)**
+1. Sign up at <https://neon.tech> (or <https://supabase.com>) and create a project.
+2. Copy its *connection string*. It looks like
+   `postgresql://user:password@ep-xxxx.us-east-2.aws.neon.tech/neondb?sslmode=require`.
+
+**Step 2: deploy the app**
+1. Go to <https://share.streamlit.io>, sign in with GitHub, and click **Create app**.
+2. Pick the repository `MOREDataset/und-interview-scheduler`, branch `main`, main file `app.py`.
+3. Under **Advanced settings → Secrets**, paste the following, using your own values:
+
+   ```toml
+   DATABASE_URL = "postgresql://user:password@ep-xxxx.neon.tech/neondb?sslmode=require"
+   SECRET_KEY = "paste-a-long-random-string-here"
+   APP_BASE_URL = "https://your-app-name.streamlit.app"
+   DEMO_MODE = "true"          # set to "false" when you start the real search
+   DEMO_COORDINATOR_PASSWORD = "choose-a-password"
+   ```
+   To get a random `SECRET_KEY`, run `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+4. Click **Deploy**. The tables are created automatically on first start.
+5. Once you know the app's address, update `APP_BASE_URL` in Secrets so the faculty and candidate
+   links point to the right place.
+
+**Step 3: switch from demo to real use**
+- In Secrets, set `DEMO_MODE = "false"`.
+- To create your own coordinator account, run this once on your own computer with the same
+  `DATABASE_URL` in your `.env`: `python manage.py create-coordinator you@und.edu "Your Name"`.
+  Then delete the demo search on the **Search settings** page.
+
+**Privacy:** the app's pages need a sign-in or a secret link, but the app itself is on the public
+internet. Keep the GitHub repository private, and check with UND IT whether hosting candidate
+information on Streamlit Cloud and Neon is acceptable. If it isn't, use the Docker / university-server
+route in section 6.
+
 ## 6. Deployment for several users
 
 SQLite (the default) is fine on one computer. For a shared server, use PostgreSQL:
