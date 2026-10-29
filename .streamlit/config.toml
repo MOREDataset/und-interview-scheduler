@@ -1,0 +1,60 @@
+# Streamlit settings for the interview scheduler.
+# Colors are "UND-inspired" (green accent on warm neutrals); swap in the
+# official university palette here if Marketing provides one.
+
+[server]
+enableStaticServing = true      # serves the bundled fonts in ./static
+enableXsrfProtection = true
+maxUploadSize = 5               # MB (participant CSV uploads)
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = true
+
+[theme]
+base = "light"
+primaryColor = "#0A5C41"
+backgroundColor = "#F8F7F3"
+secondaryBackgroundColor = "#EFEDE6"
+textColor = "#1B2420"
+linkColor = "#0A5C41"
+borderColor = "#DEDBD1"
+showWidgetBorder = true
+baseRadius = "6px"
+buttonRadius = "6px"
+font = "Public Sans, system-ui, -apple-system, Segoe UI, sans-serif"
+headingFont = "Source Serif 4, Georgia, serif"
+codeFont = "ui-monospace, SFMono-Regular, Menlo, monospace"
+baseFontSize = 15
+greenColor = "#0A7A4F"
+redColor = "#B42318"
+orangeColor = "#B54708"
+blueColor = "#1F5F8B"
+
+[[theme.fontFaces]]
+family = "Public Sans"
+url = "app/static/fonts/PublicSans-Variable.woff2"
+weight = "100 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "Public Sans"
+url = "app/static/fonts/PublicSans-Italic-Variable.woff2"
+weight = "100 900"
+style = "italic"
+
+[[theme.fontFaces]]
+family = "Source Serif 4"
+url = "app/static/fonts/SourceSerif4-Variable.woff2"
+weight = "200 900"
+style = "normal"
+
+[theme.sidebar]
+backgroundColor = "#10261D"
+secondaryBackgroundColor = "#1B3529"
+textColor = "#E9EFEA"
+borderColor = "#2A4A3B"
+primaryColor = "#9FD3B6"

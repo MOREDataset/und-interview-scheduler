@@ -1,0 +1,10 @@
+[project]
+name = "und-interview-scheduler"
+version = "0.1.0"
+description = "Faculty candidate interview scheduling for the UND Department of Communication"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
